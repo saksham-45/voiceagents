@@ -8,6 +8,7 @@ Hackathon repo for local voice and text agents that control LMMS through the `Ag
 - `integrations/lmms/patches/` - minimal upstream LMMS patches required to host the plugin cleanly.
 - `agents/lmms-text-agent/` - a local text client that sends commands into LMMS.
 - `agents/lmms-voice-agent/` - a local voice bridge with optional `whisper.cpp` transcription.
+- `agents/browser-voice-agent/` - the Chromium voice-control prototype preserved under the agent layout.
 - `agents/shared/` - shared LMMS transport and lightweight command normalization.
 - `scripts/` - scripts to install the plugin into an LMMS checkout and build it.
 - `docs/` - architecture, command map, and demo notes.

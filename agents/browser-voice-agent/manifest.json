@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Voice Agent",
+  "version": "2.0",
+  "description": "Control Chrome with your voice. No servers, fully local.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "tts",
+    "sessions"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://localhost:11434/*",
+    "http://127.0.0.1:11434/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Voice Agent"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["speech.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "favicon.svg",
+    "48": "favicon.svg",
+    "128": "favicon.svg"
+  }
+}

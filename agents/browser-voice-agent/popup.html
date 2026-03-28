@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=380">
+  <title>Voice Agent</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+        </svg>
+      </div>
+      <h1>Voice Agent</h1>
+      <span id="llm-badge" class="llm-badge off">...</span>
+      <div class="toggle-wrap">
+        <label class="toggle" title="Always-on listening">
+          <input type="checkbox" id="listen-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </header>
+
+    <div id="status-bar" class="status-bar">
+      <span id="status-dot" class="dot"></span>
+      <span id="status-text">Starting...</span>
+    </div>
+
+    <form id="cmd-form" class="cmd-form">
+      <input id="cmd-input" type="text" placeholder='Try "scroll down" or "search cats"' autocomplete="off" spellcheck="false">
+      <button type="submit" class="send-btn" title="Run command">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"/>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </button>
+    </form>
+
+    <div id="log" class="log"></div>
+
+    <div class="hints">
+      <p class="hints-title yt">YouTube — Playback</p>
+      <div class="hint-grid">
+        <span>play</span>
+        <span>pause</span>
+        <span>mute</span>
+        <span>unmute</span>
+        <span>fullscreen</span>
+        <span>theater mode</span>
+        <span>mini player</span>
+        <span>next video</span>
+        <span>previous video</span>
+        <span>skip 30 seconds</span>
+        <span>rewind 10 seconds</span>
+        <span>restart</span>
+        <span>jump to 2:30</span>
+        <span>loop</span>
+      </div>
+      <p class="hints-title yt" style="margin-top:8px">YouTube — Speed</p>
+      <div class="hint-grid">
+        <span>speed up</span>
+        <span>slow down</span>
+        <span>2x speed</span>
+        <span>normal speed</span>
+        <span>speed 1.5</span>
+      </div>
+      <p class="hints-title yt" style="margin-top:8px">YouTube — Quality & Captions</p>
+      <div class="hint-grid">
+        <span>1080p</span>
+        <span>720p</span>
+        <span>best quality</span>
+        <span>auto quality</span>
+        <span>captions on</span>
+        <span>captions off</span>
+      </div>
+      <p class="hints-title yt" style="margin-top:8px">YouTube — Volume</p>
+      <div class="hint-grid">
+        <span>volume up</span>
+        <span>volume down</span>
+        <span>volume 50</span>
+        <span>max volume</span>
+      </div>
+      <p class="hints-title yt" style="margin-top:8px">YouTube — Interact</p>
+      <div class="hint-grid">
+        <span>like</span>
+        <span>dislike</span>
+        <span>subscribe</span>
+        <span>unsubscribe</span>
+        <span>share</span>
+        <span>save to watch later</span>
+        <span>add to playlist</span>
+        <span>description</span>
+        <span>show transcript</span>
+        <span>download</span>
+        <span>clip</span>
+        <span>not interested</span>
+      </div>
+      <p class="hints-title yt" style="margin-top:8px">YouTube — Navigate</p>
+      <div class="hint-grid">
+        <span>trending</span>
+        <span>subscriptions</span>
+        <span>watch later</span>
+        <span>liked videos</span>
+        <span>history</span>
+        <span>shorts</span>
+        <span>library</span>
+        <span>go to channel</span>
+        <span>channel videos</span>
+        <span>channel playlists</span>
+      </div>
+      <p class="hints-title yt" style="margin-top:8px">YouTube — Comments</p>
+      <div class="hint-grid">
+        <span>show comments</span>
+        <span>top comments</span>
+        <span>newest comments</span>
+        <span>add comment</span>
+      </div>
+      <p class="hints-title yt" style="margin-top:8px">YouTube — Shorts</p>
+      <div class="hint-grid">
+        <span>next short</span>
+        <span>previous short</span>
+        <span>like short</span>
+      </div>
+      <p class="hints-title yt" style="margin-top:8px">YouTube — Settings</p>
+      <div class="hint-grid">
+        <span>autoplay on</span>
+        <span>autoplay off</span>
+        <span>ambient mode</span>
+      </div>
+      <p class="hints-title yt" style="margin-top:8px">YouTube — Search Filters</p>
+      <div class="hint-grid">
+        <span>filter today</span>
+        <span>this week</span>
+        <span>short videos</span>
+        <span>long videos</span>
+        <span>sort by views</span>
+        <span>hd only</span>
+        <span>clear filters</span>
+      </div>
+      <p class="hints-title" style="margin-top:12px">General — Navigation</p>
+      <div class="hint-grid">
+        <span>scroll down</span>
+        <span>go to top</span>
+        <span>new tab</span>
+        <span>close tab</span>
+        <span>go back</span>
+        <span>search cats</span>
+        <span>reload</span>
+      </div>
+      <p class="hints-title" style="margin-top:8px">General — Selection</p>
+      <div class="hint-grid">
+        <span>first video</span>
+        <span>second product</span>
+        <span>third result</span>
+        <span>click [button]</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
