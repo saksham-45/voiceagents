@@ -89,6 +89,7 @@
     if (p.intent === "FORM") return "FORM: " + (p.slots.action || "");
     if (p.intent === "YT_ACTION") return "YT: " + (p.slots.action || "").replace(/_/g, " ");
     if (p.intent === "SYSTEM") return "Stopped listening";
+    if (p.intent === "UNKNOWN") return "? (not a command)";
     return p.intent;
   }
 

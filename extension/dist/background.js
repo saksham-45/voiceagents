@@ -328,7 +328,7 @@ function parseCommand(text) {
   // ── System ──
   if (t === "stop" || t === "cancel" || t === "never mind" || t === "stop listening") return { intent: "SYSTEM", slots: { action: "cancel" } };
 
-  return { intent: "SEARCH", slots: { query: t } };
+  return { intent: "UNKNOWN", slots: { text: t } };
 }
 
 // ══════════════════════════════════════
@@ -1058,6 +1058,11 @@ function execute(command) {
 
   if (intent === "SYSTEM") {
     setListenMode(false);
+    return;
+  }
+
+  if (intent === "UNKNOWN") {
+    console.log("Unrecognized command, ignoring:", slots.text);
     return;
   }
 }
