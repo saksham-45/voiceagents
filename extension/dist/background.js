@@ -3,9 +3,190 @@
 "use strict";
 
 var listenMode = true;
+var ollamaAvailable = null;
+
 chrome.storage.local.get(["va_listen_mode"], function(r) {
   listenMode = r.va_listen_mode !== false;
 });
+
+// ── Ollama LLM Integration ──
+
+var LLM_SYSTEM_PROMPT = [
+  "You are a voice command classifier for a Chrome browser extension.",
+  "The user speaks a command. Your ONLY job: pick the best matching command from the list below, or return NONE.",
+  "Reply with ONLY a JSON object. No explanation, no markdown, no extra text.",
+  "",
+  "COMMANDS (intent → example phrases):",
+  "",
+  "SCROLL: go up, go down, scroll up, scroll down, go to top, go to bottom, page up, page down",
+  "  slots: {direction:'up|down|left|right|top|bottom', amount:'small|medium|large|max'}",
+  "",
+  "MEDIA play: play, play video, resume, start playing",
+  "MEDIA pause: pause, stop playing, hold on",
+  "MEDIA toggle: play pause, toggle",
+  "MEDIA mute: mute, silence, shut up",
+  "MEDIA unmute: unmute, turn sound on",
+  "MEDIA fullscreen: fullscreen, full screen, maximize",
+  "MEDIA exit_fullscreen: exit fullscreen, leave fullscreen, minimize",
+  "MEDIA next: next video, skip, next one, skip this",
+  "MEDIA previous: previous video, go back to last video, prev",
+  "MEDIA skip: skip ahead 10 seconds, fast forward 30s, jump ahead",
+  "  slots: {action:'skip', seconds:N}",
+  "MEDIA rewind: go back 10 seconds, rewind 30, back up a bit",
+  "  slots: {action:'rewind', seconds:N}",
+  "MEDIA like: like, like this, thumbs up, please like, heart this",
+  "MEDIA dislike: dislike, thumbs down, don't like this",
+  "MEDIA subscribe: subscribe, sub, hit subscribe",
+  "MEDIA speed_up: faster, speed up, go faster",
+  "MEDIA speed_down: slower, slow down, go slower",
+  "MEDIA set_speed: double speed, 2x, 1.5x speed, half speed, normal speed",
+  "  slots: {action:'set_speed', speed:N}  (0.25-2.0, normal=1.0)",
+  "MEDIA captions_on: captions on, subtitles on, turn on cc, show subtitles",
+  "MEDIA captions_off: captions off, subtitles off, turn off cc, hide subtitles",
+  "MEDIA theater: theater mode, cinema mode, wide mode",
+  "MEDIA miniplayer: mini player, pip, picture in picture, small player",
+  "MEDIA default_view: normal view, default view, exit theater",
+  "MEDIA volume_up: louder, turn it up, volume up, increase volume",
+  "MEDIA volume_down: quieter, turn it down, volume down, softer",
+  "MEDIA set_volume: volume 50, set volume to 80",
+  "  slots: {action:'set_volume', volume:N}  (0-100)",
+  "MEDIA set_quality: 1080p, 720p, best quality, auto quality, highest quality, lowest quality",
+  "  slots: {action:'set_quality', quality:'1080p|720p|480p|360p|240p|144p|2160p|1440p|max|min|auto'}",
+  "MEDIA seek: jump to 2:30, go to 5 minutes, seek to 1:00",
+  "  slots: {action:'seek', time:SECONDS}",
+  "MEDIA restart: restart, start over, from the beginning, go to start",
+  "MEDIA loop: loop, repeat, loop this video",
+  "MEDIA unloop: stop looping, unloop, no repeat",
+  "",
+  "YT_ACTION share: share, share this, copy link, send this",
+  "YT_ACTION save_watch_later: save, watch later, save for later, save this video",
+  "YT_ACTION add_to_playlist: add to playlist, save to playlist",
+  "YT_ACTION open_description: show description, open description, read description, what's in the description",
+  "YT_ACTION close_description: close description, hide description",
+  "YT_ACTION open_transcript: show transcript, open transcript, view transcript",
+  "YT_ACTION show_comments: show comments, go to comments, scroll to comments, read comments",
+  "YT_ACTION sort_comments: top comments, best comments, newest comments, sort newest, sort top",
+  "  slots: {action:'sort_comments', sort:'top|newest'}",
+  "YT_ACTION add_comment: comment, add comment, write comment, leave a comment, comment something, type a comment",
+  "YT_ACTION autoplay_on: autoplay on, turn on autoplay, enable autoplay",
+  "YT_ACTION autoplay_off: autoplay off, turn off autoplay, disable autoplay, stop autoplay",
+  "YT_ACTION go_to_channel: go to channel, channel page, visit channel, who made this, who uploaded this",
+  "YT_ACTION next_short: next short, swipe up",
+  "YT_ACTION prev_short: previous short, swipe down, last short",
+  "YT_ACTION not_interested: not interested, don't show this, hide this, not for me",
+  "YT_ACTION unsubscribe: unsubscribe, unsub",
+  "YT_ACTION unlike: unlike, remove like, take back like",
+  "YT_ACTION download: download, download this, save offline",
+  "YT_ACTION clip: clip, make a clip, create clip",
+  "",
+  "NAVIGATE: go to youtube.com, open google.com, visit reddit",
+  "  slots: {url:'https://...'}",
+  "  YouTube shortcuts: trending, subscriptions, watch later, liked videos, history, shorts, library",
+  "",
+  "PICK_NTH: first video, second one, third result, play the top one, watch number 2, open the last one",
+  "  slots: {index:N, item_type:'video|product|result|link|channel|short|playlist|auto'}",
+  "",
+  "SEARCH: search for cats, look up recipes, find tutorials",
+  "  slots: {query:'...'}",
+  "",
+  "TAB_OP new: new tab, open tab",
+  "TAB_OP close: close tab, close this",
+  "TAB_OP reload: reload, refresh",
+  "TAB_OP back: go back, back",
+  "TAB_OP forward: go forward, forward",
+  "TAB_OP reopen: reopen tab, undo close",
+  "",
+  "CLICK_TARGET: click sign in, press the button, tap download, hit submit",
+  "  slots: {target_text:'...'}",
+  "",
+  "TYPE_TEXT: type hello world, enter my email, write thank you",
+  "  slots: {text:'...', field:'(optional field name)'}",
+  "",
+  "ZOOM in/out/reset: zoom in, zoom out, reset zoom, make it bigger, make it smaller",
+  "",
+  "NONE: random speech, background noise, not a command, conversation, singing, humming",
+  "",
+  "RULES:",
+  "- If the speech is clearly NOT a browser command (conversation, random words, singing), return {\"intent\":\"NONE\"}",
+  "- Always return valid JSON: {\"intent\":\"...\", \"slots\":{...}}",
+  "- For MEDIA, always include {\"action\":\"...\"} in slots",
+  "- For YT_ACTION, always include {\"action\":\"...\"} in slots",
+  "- For TAB_OP, always include {\"action\":\"...\"} in slots",
+  "- Pick the CLOSEST matching command. Be generous — 'go up' = SCROLL up, 'please like' = MEDIA like",
+  "- For timestamps like '2:30' convert to seconds: 150",
+  "- For YouTube nav shortcuts: trending = https://www.youtube.com/feed/trending, etc.",
+  "- NEVER explain. ONLY output the JSON object."
+].join("\n");
+
+function checkOllama() {
+  var controller = new AbortController();
+  var timeout = setTimeout(function() { controller.abort(); }, 5000);
+  fetch("http://localhost:11434/api/tags", { signal: controller.signal })
+    .then(function(r) { clearTimeout(timeout); return r.json(); })
+    .then(function(data) {
+      ollamaAvailable = true;
+      var models = (data.models || []).map(function(m) { return m.name; }).join(", ");
+      console.log("Ollama: connected, models:", models);
+    })
+    .catch(function(err) { clearTimeout(timeout); ollamaAvailable = false; console.log("Ollama: not available —", err.message || err); });
+}
+setTimeout(checkOllama, 1000);
+setInterval(checkOllama, 30000);
+
+function callLLM(text) {
+  return fetch("http://localhost:11434/api/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "qwen2.5:3b",
+      prompt: "User said: \"" + text + "\"\n\nReturn the matching command JSON:",
+      system: LLM_SYSTEM_PROMPT,
+      stream: false,
+      options: { temperature: 0.1, num_predict: 150 }
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    var resp = (data.response || "").trim();
+    console.log("LLM raw:", resp);
+    var jsonMatch = resp.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("No JSON in response");
+    var parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed.intent) throw new Error("No intent");
+    return parsed;
+  });
+}
+
+function processCommand(transcript, callback) {
+  var regexResult = parseCommand(transcript);
+  if (regexResult.intent !== "UNKNOWN") {
+    regexResult._source = "regex";
+    callback(regexResult);
+    return;
+  }
+  if (!ollamaAvailable) {
+    console.log("Ollama unavailable, ignoring unrecognized:", transcript);
+    callback(regexResult);
+    return;
+  }
+  console.log("Regex miss, asking LLM:", transcript);
+  safeBroadcast({ type: "LLM_THINKING", transcript: transcript });
+  callLLM(transcript)
+    .then(function(parsed) {
+      console.log("LLM parsed:", parsed);
+      if (parsed.intent === "NONE") {
+        console.log("LLM says not a command, ignoring");
+        callback({ intent: "UNKNOWN", slots: { text: transcript } });
+      } else {
+        parsed._source = "ai";
+        callback(parsed);
+      }
+    })
+    .catch(function(err) {
+      console.log("LLM error, ignoring:", err.message);
+      callback({ intent: "UNKNOWN", slots: { text: transcript } });
+    });
+}
 
 // ── Ordinal helpers ──
 
@@ -54,6 +235,14 @@ function parseTimestamp(str) {
 
 function parseCommand(text) {
   var t = text.trim().toLowerCase().replace(/[.,!?]+$/, "");
+
+  // Strip polite filler words so "please pause", "can you like", etc. match core regex
+  t = t
+    .replace(/^(?:please|okay|ok|hey|yo|just|now|can\s+you|could\s+you|would\s+you|i\s+want\s+(?:you\s+)?to|go\s+ahead\s+and)\s+/i, "")
+    .replace(/\s+please$/, "")
+    .replace(/\s+for\s+me$/, "")
+    .replace(/\s+right\s+now$/, "")
+    .trim();
 
   // ══════════════════════════════════════
   // YOUTUBE-SPECIFIC COMMANDS
@@ -209,36 +398,46 @@ function parseCommand(text) {
   // ══════════════════════════════════════
 
   // ── Scroll ──
-  if (/^(go\s+to\s+)?(the\s+)?top(\s+of\s+(the\s+)?page)?$/.test(t)) return { intent: "SCROLL", slots: { direction: "top", amount: "max" } };
-  if (/^(go\s+to\s+)?(the\s+)?bottom(\s+of\s+(the\s+)?page)?$/.test(t)) return { intent: "SCROLL", slots: { direction: "bottom", amount: "max" } };
-  var scrollMatch = t.match(/^scroll\s+(up|down|left|right)(?:\s+(a lot|a little|a bit))?$/);
+  if (/^(?:go\s+(?:to\s+)?|take\s+me\s+(?:to\s+)?)?(?:the\s+)?top(?:\s+of\s+(?:the\s+)?page)?$/.test(t)) return { intent: "SCROLL", slots: { direction: "top", amount: "max" } };
+  if (/^(?:go\s+(?:to\s+)?|take\s+me\s+(?:to\s+)?)?(?:the\s+)?bottom(?:\s+of\s+(?:the\s+)?page)?$/.test(t)) return { intent: "SCROLL", slots: { direction: "bottom", amount: "max" } };
+  var scrollMatch = t.match(/^(?:scroll|go|move)\s+(up|down|left|right)(?:\s+(a lot|a little|a bit|some|more))?$/);
   if (scrollMatch) {
     var rawAmt = scrollMatch[2] || "";
     var amount = "medium";
-    if (rawAmt.includes("lot")) amount = "large";
-    else if (rawAmt.includes("little") || rawAmt.includes("bit")) amount = "small";
+    if (rawAmt.includes("lot") || rawAmt.includes("more")) amount = "large";
+    else if (rawAmt.includes("little") || rawAmt.includes("bit") || rawAmt.includes("some")) amount = "small";
     return { intent: "SCROLL", slots: { direction: scrollMatch[1], amount: amount } };
   }
-  if (t === "page down" || t === "scroll down") return { intent: "SCROLL", slots: { direction: "down", amount: "large" } };
-  if (t === "page up" || t === "scroll up") return { intent: "SCROLL", slots: { direction: "up", amount: "large" } };
+  if (t === "page down" || t === "scroll down" || t === "down") return { intent: "SCROLL", slots: { direction: "down", amount: "large" } };
+  if (t === "page up" || t === "scroll up" || t === "up") return { intent: "SCROLL", slots: { direction: "up", amount: "large" } };
 
   // ── Media (basic — works on any site) ──
-  if (/^(play|resume)(\s+video)?$/.test(t)) return { intent: "MEDIA", slots: { action: "play" } };
-  if (/^pause(\s+video)?$/.test(t)) return { intent: "MEDIA", slots: { action: "pause" } };
-  if (/^(play|pause|toggle)$/.test(t)) return { intent: "MEDIA", slots: { action: "toggle" } };
-  if (/^mute$/.test(t)) return { intent: "MEDIA", slots: { action: "mute" } };
-  if (/^unmute$/.test(t)) return { intent: "MEDIA", slots: { action: "unmute" } };
-  if (/^(full\s*screen|enter\s+full\s*screen|go\s+full\s*screen)$/.test(t)) return { intent: "MEDIA", slots: { action: "fullscreen" } };
-  if (/^(exit\s+full\s*screen|leave\s+full\s*screen)$/.test(t)) return { intent: "MEDIA", slots: { action: "exit_fullscreen" } };
-  if (/^(next\s+video|skip(\s+video)?)$/.test(t)) return { intent: "MEDIA", slots: { action: "next" } };
-  if (/^(previous\s+video|prev\s+video)$/.test(t)) return { intent: "MEDIA", slots: { action: "previous" } };
-  var skipMatch = t.match(/^(?:skip|fast\s+forward)\s+(\d+)\s*(?:seconds?|s)?(?:\s+ahead)?$/);
+  if (/^(?:play|resume)(?:\s+(?:the\s+)?video)?$/.test(t)) return { intent: "MEDIA", slots: { action: "play" } };
+  if (/^pause(?:\s+(?:the\s+)?video)?$/.test(t)) return { intent: "MEDIA", slots: { action: "pause" } };
+  if (/^(?:stop|stop\s+(?:the\s+)?video|stop\s+playing)$/.test(t)) return { intent: "MEDIA", slots: { action: "pause" } };
+  if (/^(?:play\s*\/?\s*pause|toggle)$/.test(t)) return { intent: "MEDIA", slots: { action: "toggle" } };
+  if (/^(?:mute|mute\s+(?:the\s+)?(?:video|audio|sound|tab))$/.test(t)) return { intent: "MEDIA", slots: { action: "mute" } };
+  if (/^(?:unmute|unmute\s+(?:the\s+)?(?:video|audio|sound|tab)|turn\s+(?:the\s+)?sound\s+(?:back\s+)?on)$/.test(t)) return { intent: "MEDIA", slots: { action: "unmute" } };
+  if (/^(?:full\s*screen|enter\s+full\s*screen|go\s+full\s*screen)$/.test(t)) return { intent: "MEDIA", slots: { action: "fullscreen" } };
+  if (/^(?:exit\s+full\s*screen|leave\s+full\s*screen)$/.test(t)) return { intent: "MEDIA", slots: { action: "exit_fullscreen" } };
+  if (/^(?:next(?:\s+(?:the\s+)?video)?|skip(?:\s+(?:this|the)\s+video)?)$/.test(t)) return { intent: "MEDIA", slots: { action: "next" } };
+  if (/^(?:prev(?:ious)?(?:\s+(?:the\s+)?video)?)$/.test(t)) return { intent: "MEDIA", slots: { action: "previous" } };
+  var skipMatch = t.match(/^(?:skip|fast\s+forward|jump)\s+(?:ahead\s+)?(?:like\s+)?(\d+)\s*(?:seconds?|s|secs?)?(?:\s+ahead)?$/);
   if (skipMatch) return { intent: "MEDIA", slots: { action: "skip", seconds: parseInt(skipMatch[1]) } };
-  var rewindMatch = t.match(/^(?:rewind|go\s+back)\s+(\d+)\s*(?:seconds?|s)?$/);
+  var rewindMatch = t.match(/^(?:rewind|go\s+back|back\s+up)\s+(?:like\s+)?(\d+)\s*(?:seconds?|s|secs?)?$/);
   if (rewindMatch) return { intent: "MEDIA", slots: { action: "rewind", seconds: parseInt(rewindMatch[1]) } };
-  if (/^(like|like\s+this\s+video|thumbs\s+up)$/.test(t)) return { intent: "MEDIA", slots: { action: "like" } };
-  if (/^(dislike|thumbs\s+down)$/.test(t)) return { intent: "MEDIA", slots: { action: "dislike" } };
-  if (/^subscribe$/.test(t)) return { intent: "MEDIA", slots: { action: "subscribe" } };
+  if (/^(?:like|like\s+(?:this|the|that)\s+video|thumbs\s+up|hit\s+(?:the\s+)?like|smash\s+(?:the\s+)?like)$/.test(t)) return { intent: "MEDIA", slots: { action: "like" } };
+  if (/^(?:dislike|dislike\s+(?:this|the|that)\s+video|thumbs\s+down|hit\s+(?:the\s+)?dislike)$/.test(t)) return { intent: "MEDIA", slots: { action: "dislike" } };
+  if (/^(?:subscribe|sub|hit\s+subscribe|hit\s+(?:the\s+)?sub)$/.test(t)) return { intent: "MEDIA", slots: { action: "subscribe" } };
+
+  // ── "play [something]" as search (e.g. "play Davido", "play lofi beats") ──
+  var playSearch = t.match(/^play\s+(.+)$/);
+  if (playSearch) {
+    var what = playSearch[1].trim();
+    if (!/^(?:the\s+)?(?:video|first|second|third|fourth|fifth|next|prev)/.test(what)) {
+      return { intent: "SEARCH", slots: { query: what } };
+    }
+  }
 
   // ── Ordinal Selection ──
   var ordinalMatch = t.match(/^(?:watch|play|open|click|view|select|pick|choose|go\s+to)\s+(?:the\s+)?(\w+)\s+(video|product|result|link|item|article|image|song|post|story|option|channel|playlist|movie|show|short|stream)s?$/);
@@ -1063,6 +1262,7 @@ function execute(command) {
 
   if (intent === "UNKNOWN") {
     console.log("Unrecognized command, ignoring:", slots.text);
+    safeBroadcast({ type: "COMMAND_IGNORED", text: slots.text });
     return;
   }
 }
@@ -1106,12 +1306,21 @@ function safeBroadcast(msg) {
 function setListenMode(on) {
   listenMode = on;
   chrome.storage.local.set({ va_listen_mode: on });
-  if (on) { activateOnCurrentTab(); }
-  else {
+  if (on) {
+    muteActiveTab(true);
+    activateOnCurrentTab();
+  } else {
+    muteActiveTab(false);
     chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
       if (tabs && tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "STOP_SPEECH" }, function() { if (chrome.runtime.lastError) {} });
     });
   }
+}
+
+function muteActiveTab(mute) {
+  chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+    if (tabs && tabs[0]) chrome.tabs.update(tabs[0].id, { muted: mute });
+  });
 }
 
 function isValidTab(tab) {
@@ -1171,22 +1380,29 @@ chrome.runtime.onStartup.addListener(function() {
 
 chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   if (msg.type === "EXECUTE_COMMAND") {
-    var parsed = parseCommand(msg.text);
-    execute(parsed);
-    sendResponse({ parsed: parsed });
+    processCommand(msg.text, function(parsed) {
+      execute(parsed);
+      if (parsed.intent !== "UNKNOWN") {
+        safeBroadcast({ type: "COMMAND_EXECUTED", transcript: msg.text, parsed: parsed });
+      }
+    });
+    sendResponse({ ok: true });
   }
   else if (msg.type === "TOGGLE_LISTEN") {
     setListenMode(!listenMode);
     sendResponse({ listening: listenMode });
   }
   else if (msg.type === "GET_LISTEN_MODE") {
-    sendResponse({ listening: listenMode });
+    sendResponse({ listening: listenMode, ollama: ollamaAvailable });
   }
   else if (msg.type === "SPEECH_RESULT") {
     console.log("Voice:", msg.transcript);
-    var parsed2 = parseCommand(msg.transcript);
-    execute(parsed2);
-    safeBroadcast({ type: "COMMAND_EXECUTED", transcript: msg.transcript, parsed: parsed2 });
+    processCommand(msg.transcript, function(parsed) {
+      execute(parsed);
+      if (parsed.intent !== "UNKNOWN") {
+        safeBroadcast({ type: "COMMAND_EXECUTED", transcript: msg.transcript, parsed: parsed });
+      }
+    });
   }
   else if (msg.type === "USER_STOPPED_SPEECH") {
     setListenMode(false);

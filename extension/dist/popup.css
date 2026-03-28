@@ -76,6 +76,15 @@ header h1 { font-size: 15px; font-weight: 600; flex: 1; }
 .dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .dot.off { background: var(--text2); }
 .dot.error { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.dot.thinking { background: #f39c12; box-shadow: 0 0 6px #f39c12; animation: pulse-dot 0.6s ease infinite; }
+@keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+.llm-badge {
+  font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 4px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.llm-badge.on { background: rgba(108,92,231,0.2); color: var(--accent); }
+.llm-badge.off { background: var(--surface2); color: var(--text2); }
 
 #status-text {
   overflow: hidden;
@@ -115,6 +124,9 @@ header h1 { font-size: 15px; font-weight: 600; flex: 1; }
 .log-label { font-weight: 600; flex-shrink: 0; min-width: 24px; }
 .log-you .log-label { color: var(--green); }
 .log-agent .log-label { color: var(--accent); }
+.log-ai .log-label { color: #f39c12; }
+.log-ignored .log-label { color: var(--text2); }
+.log-ignored .log-msg { color: var(--text2); opacity: 0.6; font-style: italic; }
 .log-error .log-label { color: var(--red); }
 .log-msg { color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

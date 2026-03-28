@@ -13,6 +13,11 @@
     if (resp) {
       toggle.checked = resp.listening;
       updateStatus(resp.listening);
+      var badge = document.getElementById("llm-badge");
+      if (badge) {
+        badge.textContent = resp.ollama ? "AI" : "Regex";
+        badge.className = "llm-badge " + (resp.ollama ? "on" : "off");
+      }
     }
   });
 
@@ -47,9 +52,19 @@
       if (msg.error === "not-allowed") statusText.textContent = "Mic blocked on this site";
       else statusText.textContent = "Restarting...";
     }
+    else if (msg.type === "COMMAND_IGNORED") {
+      addLog("ignored", msg.text || "?");
+      statusDot.className = "dot on";
+      statusText.textContent = "Not a command — listening...";
+    }
+    else if (msg.type === "LLM_THINKING") {
+      statusDot.className = "dot thinking";
+      statusText.textContent = "AI thinking...";
+    }
     else if (msg.type === "COMMAND_EXECUTED") {
       addLog("you", msg.transcript);
-      addLog("agent", formatParsed(msg.parsed));
+      var src = msg.parsed && msg.parsed._source === "ai" ? "ai" : "agent";
+      addLog(src, formatParsed(msg.parsed));
       statusDot.className = "dot on";
       statusText.textContent = "Done — listening...";
     }
@@ -64,13 +79,12 @@
     var text = cmdInput.value.trim();
     if (!text) return;
     cmdInput.value = "";
-    addLog("you", text);
+    statusDot.className = "dot thinking";
+    statusText.textContent = "Processing...";
     chrome.runtime.sendMessage({ type: "EXECUTE_COMMAND", text: text }, function(resp) {
       if (chrome.runtime.lastError) {
         addLog("error", chrome.runtime.lastError.message);
-        return;
       }
-      if (resp && resp.parsed) addLog("agent", formatParsed(resp.parsed));
     });
   });
 
@@ -98,7 +112,12 @@
     entry.className = "log-entry log-" + role;
     var label = document.createElement("span");
     label.className = "log-label";
-    label.textContent = role === "you" ? "You" : role === "error" ? "Err" : "Bot";
+    if (role === "you") label.textContent = "You";
+    else if (role === "agent") label.textContent = "Bot";
+    else if (role === "ai") label.textContent = "AI";
+    else if (role === "ignored") label.textContent = "Skip";
+    else if (role === "error") label.textContent = "Err";
+    else label.textContent = role;
     var msg = document.createElement("span");
     msg.className = "log-msg";
     msg.textContent = text;
@@ -115,10 +134,9 @@
         cmdInput.value = text.replace(/\[.*?\]/, "").trim() + " ";
         cmdInput.focus();
       } else {
-        addLog("you", text);
-        chrome.runtime.sendMessage({ type: "EXECUTE_COMMAND", text: text }, function(resp) {
-          if (resp && resp.parsed) addLog("agent", formatParsed(resp.parsed));
-        });
+        statusDot.className = "dot thinking";
+        statusText.textContent = "Processing...";
+        chrome.runtime.sendMessage({ type: "EXECUTE_COMMAND", text: text }, function() {});
       }
     });
   });
