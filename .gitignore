@@ -39,13 +39,7 @@ __pycache__/
 .env
 .env.*
 
-# Legacy extension scaffold (old React/Vite build — extension now lives in extension/dist/)
-extension/public/
-extension/src/
-extension/eslint.config.js
-extension/tsconfig*.json
-extension/vite.config.ts
-extension/package.json
-extension/package-lock.json
-extension/index.html
-extension/README.md
+# Legacy folders still on disk (not part of the project anymore)
+extension/
+backend/
+docs/

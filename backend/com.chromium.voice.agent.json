@@ -1,9 +1,0 @@
-{
-  "name": "com.chromium.voice.agent",
-  "description": "Python Native Messaging Host for Chromium Voice + Eye Agent",
-  "path": "/Users/anubhavgupta/.voiceagent/host.py",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://llkngkmgamkiimbeefipbeighlleocnl/"
-  ]
-}
