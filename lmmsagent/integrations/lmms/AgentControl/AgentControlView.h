@@ -51,6 +51,7 @@ private:
 	QStringList ffmpegCaptureArgs( const QString &outputPath ) const;
 	QStringList ffmpegContinuousCaptureArgs( const QString &outputPattern ) const;
 	bool looksLikeCommandTranscript( const QString& transcript ) const;
+	bool canonicalizeFastCommand( const QString& transcript, QString& command ) const;
 	bool dispatchTranscript( const QString& transcript );
 	bool runWhisperAndDispatch( const QString &audioPath );
 
@@ -67,7 +68,9 @@ private:
 	QString m_voiceChunkDir;
 	QSet<QString> m_processedVoiceChunks;
 	QString m_lastDispatchedTranscript;
+	QString m_pendingTranscript;
 	qint64 m_lastDispatchedAtMs = 0;
+	bool m_whisperServiceReady = false;
 };
 
 } // namespace gui

@@ -15,6 +15,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
@@ -60,7 +61,8 @@ AgentControlView::AgentControlView( AgentControlPlugin *plugin )
 	connect( m_voiceStartButton, &QPushButton::clicked, this, &AgentControlView::startVoiceCapture );
 	connect( m_voiceStopButton, &QPushButton::clicked, this, &AgentControlView::stopVoiceCapture );
 	connect( m_voiceChunkTimer, &QTimer::timeout, this, &AgentControlView::processVoiceChunks );
-	m_voiceChunkTimer->setInterval( 650 );
+	const int configuredPollMs = qEnvironmentVariableIntValue( "LMMS_VOICE_POLL_MS" );
+	m_voiceChunkTimer->setInterval( configuredPollMs > 0 ? qMax( 200, configuredPollMs ) : 350 );
 	connect( m_plugin, &AgentControlPlugin::logMessage, this, &AgentControlView::appendLog );
 	connect( m_plugin, &AgentControlPlugin::commandResult, this, &AgentControlView::appendLog );
 	setVoiceUiState( false );
@@ -447,6 +449,7 @@ void AgentControlView::shutdownWhisperService()
 	}
 	m_whisperServiceProcess->deleteLater();
 	m_whisperServiceProcess = nullptr;
+	m_whisperServiceReady = false;
 }
 
 QString AgentControlView::microphoneDevice() const
@@ -497,6 +500,7 @@ QStringList AgentControlView::ffmpegCaptureArgs( const QString &outputPath ) con
 QStringList AgentControlView::ffmpegContinuousCaptureArgs( const QString &outputPattern ) const
 {
 	QStringList args;
+	const QString segmentSeconds = qEnvironmentVariable( "LMMS_VOICE_SEGMENT_SEC" ).trimmed();
 	args << QStringLiteral( "-hide_banner" )
 		<< QStringLiteral( "-loglevel" ) << QStringLiteral( "error" );
 #if defined( Q_OS_MACOS )
@@ -512,7 +516,7 @@ QStringList AgentControlView::ffmpegContinuousCaptureArgs( const QString &output
 	args << QStringLiteral( "-ac" ) << QStringLiteral( "1" )
 		<< QStringLiteral( "-ar" ) << QStringLiteral( "16000" )
 		<< QStringLiteral( "-f" ) << QStringLiteral( "segment" )
-		<< QStringLiteral( "-segment_time" ) << QStringLiteral( "1.8" )
+		<< QStringLiteral( "-segment_time" ) << ( segmentSeconds.isEmpty() ? QStringLiteral( "1.6" ) : segmentSeconds )
 		<< QStringLiteral( "-segment_format" ) << QStringLiteral( "wav" )
 		<< QStringLiteral( "-reset_timestamps" ) << QStringLiteral( "1" )
 		<< QStringLiteral( "-y" ) << outputPattern;
@@ -542,8 +546,10 @@ void AgentControlView::startVoiceCapture()
 
 	m_processedVoiceChunks.clear();
 	m_lastDispatchedTranscript.clear();
+	m_pendingTranscript.clear();
 	m_lastDispatchedAtMs = 0;
 	m_voiceAudioPath.clear();
+	m_whisperServiceReady = false;
 
 	m_voiceRecordProcess = new QProcess( this );
 	connect( m_voiceRecordProcess,
@@ -563,6 +569,20 @@ void AgentControlView::startVoiceCapture()
 		m_voiceChunkDir.clear();
 		setVoiceUiState( false );
 		return;
+	}
+
+	if( useWhisperService() )
+	{
+		QString serviceError;
+		if( ensureWhisperServiceReady( serviceError ) )
+		{
+			m_whisperServiceReady = true;
+			appendLog( tr( "Whisper service is warm and ready." ) );
+		}
+		else
+		{
+			appendLog( tr( "Whisper service warmup failed: %1. Falling back to CLI transcription." ).arg( serviceError ) );
+		}
 	}
 
 	m_voiceChunkTimer->start();
@@ -618,6 +638,8 @@ void AgentControlView::stopVoiceCapture()
 		m_voiceChunkDir.clear();
 	}
 	m_processedVoiceChunks.clear();
+	m_pendingTranscript.clear();
+	m_whisperServiceReady = false;
 	appendLog( tr( "Voice listener stopped." ) );
 }
 
@@ -682,17 +704,28 @@ bool AgentControlView::transcribeAudio(
 	if( useWhisperService() )
 	{
 		QString serviceError;
-		if( ensureWhisperServiceReady( serviceError ) &&
-			transcribeViaWhisperService( audioPath, transcript, serviceError ) )
+		if( !m_whisperServiceReady )
+		{
+			m_whisperServiceReady = ensureWhisperServiceReady( serviceError );
+			if( !m_whisperServiceReady && !quietNoTranscript && !serviceError.isEmpty() )
+			{
+				appendLog( tr( "Whisper service unavailable: %1. Falling back to CLI." ).arg( serviceError ) );
+			}
+		}
+		if( m_whisperServiceReady && transcribeViaWhisperService( audioPath, transcript, serviceError ) )
 		{
 			if( !quietNoTranscript )
 			{
 				appendLog( tr( "Whisper service transcription completed." ) );
 			}
 		}
-		else if( !serviceError.isEmpty() && !quietNoTranscript )
+		else if( m_whisperServiceReady )
 		{
-			appendLog( tr( "Whisper service unavailable: %1. Falling back to CLI." ).arg( serviceError ) );
+			m_whisperServiceReady = false;
+			if( !quietNoTranscript && !serviceError.isEmpty() )
+			{
+				appendLog( tr( "Whisper service transcription failed: %1. Falling back to CLI." ).arg( serviceError ) );
+			}
 		}
 	}
 
@@ -842,7 +875,7 @@ bool AgentControlView::looksLikeCommandTranscript( const QString& transcript ) c
 	{
 		return true;
 	}
-	if( hasAction && hasDomain && tokens.size() <= 8 )
+	if( ( hasAction || hasDomain ) && tokens.size() <= 8 )
 	{
 		return true;
 	}
@@ -857,31 +890,170 @@ bool AgentControlView::looksLikeCommandTranscript( const QString& transcript ) c
 bool AgentControlView::dispatchTranscript( const QString& transcript )
 {
 	const QString cleanTranscript = transcript.trimmed();
-	if( cleanTranscript.isEmpty() || !looksLikeCommandTranscript( cleanTranscript ) )
+	if( cleanTranscript.isEmpty() )
 	{
 		return false;
 	}
 
-	const QString normalized = cleanTranscript.toLower().simplified();
-	const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-	if( normalized == m_lastDispatchedTranscript && nowMs - m_lastDispatchedAtMs < 2500 )
+	QStringList candidates;
+	candidates << cleanTranscript;
+	if( !m_pendingTranscript.isEmpty() )
+	{
+		candidates << ( m_pendingTranscript + QStringLiteral( " " ) + cleanTranscript ).simplified();
+	}
+
+	for( const QString& candidate : candidates )
+	{
+		if( candidate.isEmpty() )
+		{
+			continue;
+		}
+		if( !looksLikeCommandTranscript( candidate ) )
+		{
+			continue;
+		}
+
+		QString commandText = candidate;
+		QString fastCommand;
+		if( canonicalizeFastCommand( candidate, fastCommand ) )
+		{
+			commandText = fastCommand;
+		}
+
+		const QString normalized = commandText.toLower().simplified();
+		const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+		if( normalized == m_lastDispatchedTranscript && nowMs - m_lastDispatchedAtMs < 2500 )
+		{
+			return false;
+		}
+
+		const QString result = m_plugin->handleCommand( commandText );
+		if( result.startsWith( QStringLiteral( "Unknown command:" ), Qt::CaseInsensitive ) ||
+			result.startsWith( QStringLiteral( "Unknown window:" ), Qt::CaseInsensitive ) ||
+			result.startsWith( QStringLiteral( "Unknown instrument:" ), Qt::CaseInsensitive ) )
+		{
+			continue;
+		}
+
+		appendLog( tr( "Heard: %1" ).arg( cleanTranscript ) );
+		if( commandText.compare( cleanTranscript, Qt::CaseInsensitive ) != 0 )
+		{
+			appendLog( tr( "Fast map: %1" ).arg( commandText ) );
+		}
+		appendLog( commandText + QStringLiteral( " => " ) + result );
+		m_lastDispatchedTranscript = normalized;
+		m_lastDispatchedAtMs = nowMs;
+		m_pendingTranscript.clear();
+		return true;
+	}
+
+	const QStringList tokens = cleanTranscript.toLower().simplified().split( ' ', Qt::SkipEmptyParts );
+	if( tokens.size() <= 3 )
+	{
+		m_pendingTranscript = cleanTranscript;
+	}
+	else
+	{
+		m_pendingTranscript = tokens.mid( qMax( 0, tokens.size() - 3 ) ).join( ' ' );
+	}
+	return false;
+}
+
+bool AgentControlView::canonicalizeFastCommand( const QString& transcript, QString& command ) const
+{
+	command.clear();
+	const QString normalized = transcript.toLower().simplified();
+	if( normalized.isEmpty() )
 	{
 		return false;
 	}
 
-	const QString result = m_plugin->handleCommand( cleanTranscript );
-	if( result.startsWith( QStringLiteral( "Unknown command:" ), Qt::CaseInsensitive ) ||
-		result.startsWith( QStringLiteral( "Unknown window:" ), Qt::CaseInsensitive ) ||
-		result.startsWith( QStringLiteral( "Unknown instrument:" ), Qt::CaseInsensitive ) )
+	if( normalized.contains( QStringLiteral( "open" ) ) &&
+		( normalized.contains( QStringLiteral( "slicer" ) ) || normalized.contains( QStringLiteral( "splicer" ) ) ) )
 	{
-		return false;
+		command = QStringLiteral( "open slicer" );
+		return true;
+	}
+	if( normalized == QStringLiteral( "slicer" ) || normalized == QStringLiteral( "splicer" ) )
+	{
+		command = QStringLiteral( "open slicer" );
+		return true;
 	}
 
-	appendLog( tr( "Heard: %1" ).arg( cleanTranscript ) );
-	appendLog( cleanTranscript + QStringLiteral( " => " ) + result );
-	m_lastDispatchedTranscript = normalized;
-	m_lastDispatchedAtMs = nowMs;
-	return true;
+	if( normalized.contains( QStringLiteral( "import" ) ) &&
+		( normalized.contains( QStringLiteral( "slicer" ) ) || normalized.contains( QStringLiteral( "splicer" ) ) ) )
+	{
+		const QRegularExpression filePattern(
+			R"(\b([a-z0-9._-]+\.(?:wav|mp3|flac|aiff|ogg|m4a))\b)",
+			QRegularExpression::CaseInsensitiveOption );
+		const auto fileMatch = filePattern.match( normalized );
+		const QString fileName = fileMatch.hasMatch() ? fileMatch.captured( 1 ) : QStringLiteral( "sample.wav" );
+		command = QStringLiteral( "import %1 into slicer" ).arg( fileName );
+		return true;
+	}
+
+	if( ( normalized.contains( QStringLiteral( "divide" ) ) || normalized.contains( QStringLiteral( "split" ) ) ) &&
+		normalized.contains( QStringLiteral( "transient" ) ) )
+	{
+		command = QStringLiteral( "divide into transient segments" );
+		return true;
+	}
+
+	if( ( normalized.contains( QStringLiteral( "divide" ) ) || normalized.contains( QStringLiteral( "split" ) ) ) &&
+		normalized.contains( QStringLiteral( "equal" ) ) &&
+		normalized.contains( QStringLiteral( "segment" ) ) )
+	{
+		command = QStringLiteral( "divide into equal segments" );
+		return true;
+	}
+
+	if( ( normalized.contains( QStringLiteral( "create" ) ) || normalized.contains( QStringLiteral( "new" ) ) ||
+		  normalized.contains( QStringLiteral( "make" ) ) ) &&
+		normalized.contains( QStringLiteral( "instrument" ) ) &&
+		normalized.contains( QStringLiteral( "track" ) ) )
+	{
+		command = QStringLiteral( "create instrument track" );
+		return true;
+	}
+
+	if( ( normalized.contains( QStringLiteral( "open" ) ) || normalized.contains( QStringLiteral( "show" ) ) ) &&
+		normalized.contains( QStringLiteral( "piano" ) ) &&
+		( normalized.contains( QStringLiteral( "roll" ) ) || normalized.contains( QStringLiteral( "role" ) ) ) )
+	{
+		command = QStringLiteral( "open piano roll" );
+		return true;
+	}
+
+	if( normalized.contains( QStringLiteral( "add" ) ) &&
+		( normalized.contains( QStringLiteral( "kick" ) ) || normalized.contains( QStringLiteral( "808" ) ) ||
+		  normalized.contains( QStringLiteral( "drum" ) ) ) )
+	{
+		command = QStringLiteral( "add kick drums" );
+		return true;
+	}
+	if( normalized.contains( QStringLiteral( "kick" ) ) || normalized.contains( QStringLiteral( "808" ) ) )
+	{
+		command = QStringLiteral( "add kick drums" );
+		return true;
+	}
+
+	if( ( normalized.contains( QStringLiteral( "open" ) ) || normalized.contains( QStringLiteral( "show" ) ) ) &&
+		normalized.contains( QStringLiteral( "song" ) ) &&
+		( normalized.contains( QStringLiteral( "editor" ) ) || normalized.contains( QStringLiteral( "edit" ) ) ) )
+	{
+		command = QStringLiteral( "open song editor" );
+		return true;
+	}
+
+	const QRegularExpression bpmPattern( R"(\b(\d{2,3})\s*bpm\b)", QRegularExpression::CaseInsensitiveOption );
+	const auto bpmMatch = bpmPattern.match( normalized );
+	if( bpmMatch.hasMatch() )
+	{
+		command = QStringLiteral( "set tempo to %1" ).arg( bpmMatch.captured( 1 ) );
+		return true;
+	}
+
+	return false;
 }
 
 bool AgentControlView::runWhisperAndDispatch( const QString &audioPath )
