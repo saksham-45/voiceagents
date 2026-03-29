@@ -1,10 +1,9 @@
 # Chromium Voice + Eye Agent
 ## Comprehensive Implementation Plan (Local-Only, High-Performance, Accessibility-First)
 
-Version: 3.0
-Date: 2026-03-27
-Authoring mode: Implementation specification for coding AI execution
-Status: Ready for build
+**Version:** 4.0  
+**Authoring mode:** Implementation specification for coding AI execution  
+**Status:** Ready for build (living document)
 
 ---
 
@@ -93,7 +92,7 @@ NFR-006: Safety
 
 ## 4. System Architecture
 
-## 4.1 Process model
+### 4.1 Process model
 
 The system consists of:
 1) Browser Process
@@ -125,7 +124,7 @@ Rule:
 - No long-running model inference on UI thread.
 - All IPC MUST be bounded with backpressure.
 
-## 4.2 Data flow
+### 4.2 Data flow
 
 1) Audio frame arrives.
 2) VAD marks speech segments.
@@ -651,31 +650,82 @@ WP-10: Testing, telemetry, release gating
 
 ---
 
-## 19. Milestone Timeline
+## 19. Rollout Phases (Sequencing Without Calendar)
 
-M1 (Weeks 1-3): Foundations
-- WP-01, WP-02, WP-03 baseline
-- Gate: offline streaming transcript works with local model.
+Phases are ordered; duration is intentionally unspecified.
 
-M2 (Weeks 4-6): Command core
-- WP-04, WP-05
-- Gate: browser and simple page commands execute with verification.
+**Phase M1 — Foundations**  
+Work packages: WP-01, WP-02, WP-03 baseline.  
+Exit gate: offline streaming transcript works end-to-end with a local ASR path.
 
-M3 (Weeks 7-9): Robust execution
-- WP-07, WP-08
-- Gate: risk-tiered execution and recovery flows stable.
+**Phase M2 — Command core**  
+Work packages: WP-04, WP-05.  
+Exit gate: browser-level and simple in-page commands execute with post-condition verification.
 
-M4 (Weeks 10-12): Eye tracking + ambiguity
-- WP-06 + ambiguity benchmark
-- Gate: wrong-target < 1.5% pre-final tuning.
+**Phase M3 — Robust execution**  
+Work packages: WP-07, WP-08.  
+Exit gate: risk-tiered confirmations and error recovery are stable on representative sites.
 
-M5 (Weeks 13-15): Accessibility polish + hardening
-- WP-09, WP-10
-- Gate: >=95% success, <1% wrong-target, no local-only violations.
+**Phase M4 — Eye tracking and ambiguity**  
+Work packages: WP-06 plus ambiguity benchmark harness.  
+Exit gate: wrong-target rate improves versus no-gaze baseline; tuning toward NFR wrong-target target.
+
+**Phase M5 — Accessibility polish and hardening**  
+Work packages: WP-09, WP-10.  
+Exit gate: program-level Definition of Done (Section 24) satisfied on agreed hardware tiers.
 
 ---
 
-## 20. AI-Execution Notes (No Ambiguity Rules)
+## 20. Future Roadmap and Research (Informative)
+
+The following are **not** normative requirements; they capture plausible extensions and research directions while keeping the **local-only** principle unless explicitly revised by a future spec.
+
+**Product and UX**
+- **Multi-step workflows / “recipes”:** chained commands (“apply for this job” → fill known fields → stop at review) with explicit checkpoints.
+- **Site and persona profiles:** per-domain command defaults, languages, and confirmation strictness (e.g. stricter on banking, looser on media).
+- **Voice macros:** user-recorded or text-defined sequences (“my morning routine”) stored locally.
+- **Side panel and rich transcript UI:** timeline of utterance → intent → action → outcome for debugging and trust.
+- **Reading and focus modes:** extract main content, read aloud, navigate by section; optional distraction stripping (informative only; respect copyright and site ToS).
+- **Clipboard and selection bridge:** “copy what I’m looking at,” “paste into this field,” “summarize selection” (all on-device).
+- **Screenshot + vision assist (local):** describe visible UI or chart for blind/low-vision users; still subject to policy engine for sensitive surfaces.
+- **Internationalization:** multilingual ASR/NLU packs, RTL layout awareness, locale-aware date/number parsing in slots.
+
+**Platform and integration**
+- **Other browsers:** port world-model and executor layers to Firefox (MV3/WAG) or Safari (where WebExtensions allow) using shared intent schema—significant engineering, same privacy bar.
+- **Native messaging host:** deeper OS integration (file picker, print dialog, system media keys) while keeping decision logic local.
+- **Companion on second device:** optional LAN-only relay for mic or TTS on phone/watch (no cloud relay in baseline design).
+- **Developer hooks:** export/import grammar snippets, OpenAPI-style description of supported intents for third-party automations (still executed locally).
+- **Local automation bus:** optional MQTT/WebSocket **on localhost** for smart-home or desk automation triggered by verified voice commands.
+- **Editor/IDE bridge:** voice-driven coding assistance that targets the IDE via a local protocol (out of scope for pure browser extension builds).
+
+**Models and intelligence**
+- **Stronger on-device semantic layer:** small LM with tool-calling constrained to the command schema; distillation from larger teacher models offline.
+- **Per-user adaptation (local):** lightweight preference learning from accepted/rejected clarifications—no raw data leaves device.
+- **Better grounding without coordinates:** layout-aware encodings (reading order, table structure) fused with AX/DOM.
+- **Streaming slot filling:** refine slots as ASR partials evolve to cut end-to-end latency.
+
+**Safety, trust, and operations**
+- **Credential flows:** delegate secrets to OS or browser password manager APIs; agent never learns passwords, only triggers “fill verified field” under CRITICAL-tier policy.
+- **Ephemeral / guest mode:** no history, no persistent macros, stricter confirmation defaults for one-off sessions.
+- **Family / managed profiles:** parental or IT-admin policies overlaid on risk tiers (still no silent exfiltration).
+- **Audit export:** optional encrypted local archive of “what ran when” for compliance-minded users.
+- **Canary sites list:** pre-registered high-risk domains that always require confirmation for certain intents.
+- **A/B harness for parsers:** shadow-run two grammars or models locally; promote winner on success-rate metrics only.
+
+**Benchmarks and quality**
+- **Living benchmark sets:** versioned task suites per vertical (e-commerce, government forms, social, video).
+- **Synthetic adversarial pages:** generated DOM/AX fixtures for CI grounding tests.
+- **Coexistence with assistive tech:** formal test matrix with NVDA, JAWS, VoiceOver where applicable.
+
+**Hardware**
+- **NPU-first packaging:** ship per-platform bundles (Apple Silicon, Qualcomm, Intel NPU) with one-click model selection.
+- **Low-power mode:** aggressive quantization and “commands only, no chit-chat” mode on battery.
+
+Anything in this subsection MAY be promoted into normative FR/NFR/WP entries in a future revision after threat modeling and scope agreement.
+
+---
+
+## 21. AI-Execution Notes (No Ambiguity Rules)
 
 Rule A:
 - Do not create alternate command schemas. Use the schema in section 7.
@@ -703,7 +753,7 @@ Rule H:
 
 ---
 
-## 21. Default Thresholds (Initial Values)
+## 22. Default Thresholds (Initial Values)
 
 These are starting values and MUST be configurable:
 - AUTO_THRESHOLD = 0.78
@@ -716,7 +766,7 @@ These are starting values and MUST be configurable:
 
 ---
 
-## 22. Deliverable Artifacts
+## 23. Deliverable Artifacts
 
 Required artifacts for implementation:
 1) Architecture doc + sequence diagrams
@@ -727,7 +777,7 @@ Required artifacts for implementation:
 
 ---
 
-## 23. Definition of Done (Program Level)
+## 24. Definition of Done (Program Level)
 
 The project is done only when all are true:
 - Functional requirements FR-001..FR-008 pass.
@@ -738,8 +788,8 @@ The project is done only when all are true:
 
 ---
 
-## 24. Final Notes
-.
+## 25. Final Notes
+
 If implementation tradeoffs are required, preserve priority order:
 1) Safety and accessibility
 2) Local-only privacy guarantees
@@ -747,4 +797,4 @@ If implementation tradeoffs are required, preserve priority order:
 4) Performance
 5) Feature breadth
 
-End of specification.
+End of specification (v4).
