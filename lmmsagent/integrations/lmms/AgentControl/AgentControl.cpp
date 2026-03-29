@@ -5,14 +5,24 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHostAddress>
+#include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QProcess>
+#include <QRegularExpressionMatch>
 #include <QMetaObject>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QThread>
 #include <QTimer>
+#include <QUrl>
+#include <QUrlQuery>
 #include <QUuid>
+#include <QVector>
 
 #include "ConfigManager.h"
 #include "Clip.h"
@@ -29,11 +39,14 @@
 #include "Note.h"
 #include "PluginFactory.h"
 #include "ProjectJournal.h"
+#include "SongEditor.h"
 #include "SampleClip.h"
 #include "SampleTrack.h"
 #include "Song.h"
 #include "TimePos.h"
 #include "Track.h"
+#include "InstrumentTrackView.h"
+#include "InstrumentTrackWindow.h"
 #include "plugin_export.h"
 
 #include "AgentControlView.h"
@@ -159,8 +172,716 @@ QString AgentControlService::handleCommand( const QString& rawText )
 		return tr( "No command provided" );
 	}
 
-	const auto parts = trimmed.split( ' ', Qt::SkipEmptyParts );
-	return dispatchTokens( parts, trimmed );
+	const QString directResult = dispatchCommandText( trimmed );
+	if( !isUnknownResponse( directResult ) )
+	{
+		return directResult;
+	}
+
+	const bool familiarRawIntent = isFamiliarIntentText( trimmed );
+
+	QString mappedCommand;
+	QString mapReason;
+	if( applyHeuristicMappings( trimmed, mappedCommand, mapReason ) &&
+		!mappedCommand.isEmpty() &&
+		normalizeName( mappedCommand ) != normalizeName( trimmed ) )
+	{
+		const bool familiarMappedIntent = isFamiliarIntentText( mappedCommand );
+		if( familiarRawIntent || familiarMappedIntent )
+		{
+			const QString mappedResult = dispatchCommandText( mappedCommand );
+			if( !isUnknownResponse( mappedResult ) )
+			{
+				const QString reasonSuffix = mapReason.isEmpty() ? QString() : tr( " (%1)" ).arg( mapReason );
+				return tr( "Interpreted as \"%1\"%2. %3" )
+					.arg( mappedCommand, reasonSuffix, mappedResult );
+			}
+		}
+	}
+
+	// Hard safety gate: do not run LLM/planner fallbacks for unrelated speech.
+	if( !familiarRawIntent )
+	{
+		return directResult;
+	}
+
+	const QString ollamaModel = qEnvironmentVariable( "LMMS_OLLAMA_MODEL" ).trimmed();
+	if( !ollamaModel.isEmpty() )
+	{
+		double confidence = 0.0;
+		QString ollamaError;
+		QString ollamaCommand;
+		if( resolveWithOllama( trimmed, ollamaCommand, confidence, ollamaError ) )
+		{
+			const bool familiar = isFamiliarIntentText( ollamaCommand );
+			const double threshold = qEnvironmentVariable( "LMMS_OLLAMA_CONFIDENCE" ).toDouble() > 0.0
+				? qEnvironmentVariable( "LMMS_OLLAMA_CONFIDENCE" ).toDouble()
+				: 0.78;
+			if( familiar && confidence >= threshold )
+			{
+				const QString ollamaResult = dispatchCommandText( ollamaCommand );
+				if( !isUnknownResponse( ollamaResult ) )
+				{
+					return tr( "Interpreted as \"%1\" (confidence %2). %3" )
+						.arg( ollamaCommand )
+						.arg( QString::number( confidence, 'f', 2 ) )
+						.arg( ollamaResult );
+				}
+			}
+		}
+		else if( !ollamaError.isEmpty() )
+		{
+			emit logMessage( tr( "Ollama fallback skipped: %1" ).arg( ollamaError ) );
+		}
+	}
+
+	QString plannerResult;
+	QString plannerError;
+	if( maybeRunTextAgentFallback( trimmed, plannerResult, plannerError ) )
+	{
+		return plannerResult;
+	}
+	if( !plannerError.isEmpty() )
+	{
+		emit logMessage( tr( "Text-agent fallback skipped: %1" ).arg( plannerError ) );
+	}
+
+	return directResult;
+}
+
+QString AgentControlService::dispatchCommandText( const QString& rawText )
+{
+	const QStringList tokens = tokenizeCommand( rawText );
+	return dispatchTokens( tokens, rawText );
+}
+
+QStringList AgentControlService::tokenizeCommand( const QString& rawText ) const
+{
+	const auto rawParts = rawText.split( ' ', Qt::SkipEmptyParts );
+	QStringList parts;
+	parts.reserve( rawParts.size() );
+
+	for( QString token : rawParts )
+	{
+		while( !token.isEmpty() && QStringLiteral( ".,!?;:\"'" ).contains( token.at( 0 ) ) )
+		{
+			token.remove( 0, 1 );
+		}
+		while( !token.isEmpty() && QStringLiteral( ".,!?;:\"'" ).contains( token.at( token.size() - 1 ) ) )
+		{
+			token.chop( 1 );
+		}
+		if( !token.isEmpty() )
+		{
+			parts << token;
+		}
+	}
+	return parts;
+}
+
+bool AgentControlService::isUnknownResponse( const QString& response ) const
+{
+	const QString normalized = response.trimmed();
+	return normalized.startsWith( "Unknown command:", Qt::CaseInsensitive ) ||
+		normalized.startsWith( "Unknown window:", Qt::CaseInsensitive ) ||
+		normalized.startsWith( "Unknown instrument:", Qt::CaseInsensitive );
+}
+
+bool AgentControlService::isFamiliarIntentText( const QString& rawText ) const
+{
+	const QString normalized = normalizeName( rawText );
+	const QStringList tokens = tokenizeCommand( rawText );
+	if( tokens.isEmpty() )
+	{
+		return false;
+	}
+
+	const QSet<QString> simpleCommands =
+	{
+		"undo", "version", "help"
+	};
+	if( simpleCommands.contains( normalizeName( tokens.first() ) ) )
+	{
+		return true;
+	}
+
+	const QSet<QString> actionKeywords =
+	{
+		"open", "show", "new", "create", "make", "import", "load", "set", "add", "remove",
+		"mute", "unmute", "solo", "unsolo", "undo", "tempo", "bpm", "divide",
+		"split", "slice", "raise", "lower", "increase", "decrease", "save", "list"
+	};
+	const QSet<QString> domainKeywords =
+	{
+		"project", "track", "instrument", "sample", "automation", "pattern", "mixer",
+		"piano", "roll", "editor", "song", "slicer", "splicer", "segment", "transient",
+		"slice", "effect", "plugin", "window", "tool", "file", "downloads"
+	};
+
+	bool hasAction = false;
+	bool hasDomain = false;
+	for( const QString& token : tokens )
+	{
+		const QString lowered = normalizeName( token );
+		if( actionKeywords.contains( lowered ) )
+		{
+			hasAction = true;
+		}
+		if( domainKeywords.contains( lowered ) )
+		{
+			hasDomain = true;
+		}
+	}
+	if( hasAction && hasDomain )
+	{
+		return true;
+	}
+
+	const QStringList keywords =
+	{
+		"open", "show", "new", "create", "make", "import", "load", "set", "add", "remove",
+		"mute", "unmute", "solo", "unsolo", "undo", "tempo", "bpm", "divide",
+		"split", "slice", "openslicer", "showslicer", "manualmap", "beginnerhelp"
+	};
+
+	for( const QString& keyword : keywords )
+	{
+		if( normalized.contains( keyword ) )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool AgentControlService::applyHeuristicMappings(
+	const QString& rawText,
+	QString& mappedCommand,
+	QString& reason ) const
+{
+	reason.clear();
+	mappedCommand = rawText.trimmed();
+	if( mappedCommand.isEmpty() )
+	{
+		return false;
+	}
+
+	const auto setReasonIfEmpty = [&reason]( const QString& value )
+	{
+		if( reason.isEmpty() )
+		{
+			reason = value;
+		}
+	};
+
+	auto lower = mappedCommand.toLower();
+
+	// Remove polite wrappers so command verbs are easier to parse.
+	bool removedConversationFiller = false;
+	const QRegularExpression leadingFiller(
+		R"(^(?:(?:hey|hi|yo|okay|ok|please|pls)\s+)*(?:(?:can|could|would)\s+(?:you|u)\s+)?(?:please|pls\s+)?(?:just\s+)?(?:hey\s+)?(?:can|could|would)?\s*(?:you|u)?\s*)",
+		QRegularExpression::CaseInsensitiveOption );
+	for( int i = 0; i < 2; ++i )
+	{
+		const QString before = mappedCommand;
+		mappedCommand.replace( leadingFiller, QString() );
+		mappedCommand.replace(
+			QRegularExpression( R"(\s+(?:please|pls|thanks|thank\s+you)\s*$)",
+				QRegularExpression::CaseInsensitiveOption ),
+			QString() );
+		mappedCommand = mappedCommand.simplified();
+		if( mappedCommand == before )
+		{
+			break;
+		}
+		removedConversationFiller = true;
+	}
+	if( removedConversationFiller )
+	{
+		setReasonIfEmpty( tr( "removed conversational filler" ) );
+	}
+	lower = mappedCommand.toLower();
+
+	if( lower.contains( "splicer" ) )
+	{
+		mappedCommand.replace( QRegularExpression( R"(\bsplicer\b)", QRegularExpression::CaseInsensitiveOption ),
+			QStringLiteral( "slicer" ) );
+		setReasonIfEmpty( tr( "corrected plugin name typo" ) );
+	}
+
+	struct RegexReplacement
+	{
+		const char* pattern;
+		const char* replacement;
+		const char* why;
+	};
+	const RegexReplacement regexReplacements[] =
+	{
+		{ R"(\bautomaton\b)", "automation", "corrected common typo" },
+		{ R"(\btepmo\b)", "tempo", "corrected common typo" },
+		{ R"(\binsrument\b)", "instrument", "corrected common typo" },
+		{ R"(\btrakc\b)", "track", "corrected common typo" },
+		{ R"(\bpattarn\b)", "pattern", "corrected common typo" },
+		{ R"(\beditr\b)", "editor", "corrected common typo" }
+	};
+	for( const auto& replacement : regexReplacements )
+	{
+		const QString before = mappedCommand;
+		mappedCommand.replace(
+			QRegularExpression( QString::fromLatin1( replacement.pattern ),
+				QRegularExpression::CaseInsensitiveOption ),
+			QString::fromLatin1( replacement.replacement ) );
+		if( mappedCommand != before )
+		{
+			setReasonIfEmpty( tr( replacement.why ) );
+		}
+	}
+	const QString beforeArticleDrop = mappedCommand;
+	mappedCommand.replace(
+		QRegularExpression( R"(\b(create|new|open|show|set|import|load|add|remove|make)\s+(?:a|an)\s+)",
+			QRegularExpression::CaseInsensitiveOption ),
+		QStringLiteral( "\\1 " ) );
+	if( mappedCommand != beforeArticleDrop )
+	{
+		setReasonIfEmpty( tr( "normalized command wording" ) );
+	}
+
+	// Normalize "make ... track" to existing create-track actions.
+	if( QRegularExpression( R"(^\s*make\s+.+\btrack\b)",
+			QRegularExpression::CaseInsensitiveOption ).match( mappedCommand ).hasMatch() )
+	{
+		mappedCommand.replace( QRegularExpression( R"(^\s*make\b)", QRegularExpression::CaseInsensitiveOption ),
+			QStringLiteral( "create" ) );
+		setReasonIfEmpty( tr( "normalized create-track phrasing" ) );
+	}
+
+	// Normalize "open the ... window/panel/view" variants.
+	const QString normalizedLower = normalizeName( mappedCommand );
+	if( normalizedLower.startsWith( "open" ) || normalizedLower.startsWith( "show" ) )
+	{
+		mappedCommand.replace(
+			QRegularExpression( R"(\b(the|window|panel|view)\b)", QRegularExpression::CaseInsensitiveOption ),
+			QString() );
+		mappedCommand = mappedCommand.simplified();
+
+		const QString openLower = normalizeName( mappedCommand );
+		if( openLower.contains( "song" ) && ( openLower.contains( "editor" ) || openLower.contains( "edit" ) ) )
+		{
+			mappedCommand = QStringLiteral( "open song editor" );
+			setReasonIfEmpty( tr( "normalized song editor window name" ) );
+		}
+		else if( openLower.contains( "automation" ) && openLower.contains( "editor" ) )
+		{
+			mappedCommand = QStringLiteral( "open automation editor" );
+			setReasonIfEmpty( tr( "normalized automation editor window name" ) );
+		}
+		else if( openLower.contains( "piano" ) && openLower.contains( "roll" ) )
+		{
+			mappedCommand = QStringLiteral( "open piano roll" );
+			setReasonIfEmpty( tr( "normalized piano roll window name" ) );
+		}
+		else if( openLower.contains( "mixer" ) || openLower.contains( "fxmixer" ) || openLower.contains( "effects" ) )
+		{
+			mappedCommand = QStringLiteral( "open mixer" );
+			setReasonIfEmpty( tr( "normalized mixer window name" ) );
+		}
+	}
+	const QString collapsed = normalizeName( mappedCommand );
+
+	// Convert inferred track-intent statements to explicit commands.
+	if( !collapsed.startsWith( "new" ) && !collapsed.startsWith( "create" ) )
+	{
+		if( collapsed.contains( "sampletrack" ) )
+		{
+			mappedCommand = QStringLiteral( "create sample track" );
+			setReasonIfEmpty( tr( "inferred sample track creation intent" ) );
+		}
+		else if( collapsed.contains( "instrumenttrack" ) )
+		{
+			mappedCommand = QStringLiteral( "create instrument track" );
+			setReasonIfEmpty( tr( "inferred instrument track creation intent" ) );
+		}
+		else if( collapsed.contains( "automationtrack" ) )
+		{
+			mappedCommand = QStringLiteral( "create automation track" );
+			setReasonIfEmpty( tr( "inferred automation track creation intent" ) );
+		}
+		else if( collapsed.contains( "patterntrack" ) )
+		{
+			mappedCommand = QStringLiteral( "create pattern track" );
+			setReasonIfEmpty( tr( "inferred pattern track creation intent" ) );
+		}
+	}
+
+	// "lets go 128 bpm" -> "set tempo to 128"
+	const QRegularExpression bpmPhrase( R"(\b(\d{2,3})\s*bpm\b)", QRegularExpression::CaseInsensitiveOption );
+	const auto bpmMatch = bpmPhrase.match( mappedCommand );
+	if( bpmMatch.hasMatch() && !normalizeName( mappedCommand ).contains( "settempo" ) )
+	{
+		mappedCommand = tr( "set tempo to %1" ).arg( bpmMatch.captured( 1 ) );
+		setReasonIfEmpty( tr( "inferred tempo set intent" ) );
+	}
+
+	// "divide into 16 segments" -> "divide into 16 equal segments"
+	if( QRegularExpression( R"(\bdivide\s+into\s+\d+\s+segments?\b)",
+			QRegularExpression::CaseInsensitiveOption ).match( mappedCommand ).hasMatch() &&
+		!QRegularExpression( R"(\bequal\b)", QRegularExpression::CaseInsensitiveOption ).match( mappedCommand ).hasMatch() )
+	{
+		mappedCommand.replace(
+			QRegularExpression( R"(\bsegments?\b)", QRegularExpression::CaseInsensitiveOption ),
+			QStringLiteral( "equal segments" ) );
+		setReasonIfEmpty( tr( "assumed equal segments" ) );
+	}
+
+	// "from download(s)" is metadata, not part of filename.
+	mappedCommand.replace(
+		QRegularExpression( R"(\bfrom\s+(?:my\s+)?downloads?(?:\s+folder)?\b)",
+			QRegularExpression::CaseInsensitiveOption ),
+		QString() );
+	mappedCommand = mappedCommand.simplified();
+
+	const QStringList knownTokens =
+	{
+		"open", "show", "new", "create", "make", "import", "load", "set", "add", "remove",
+		"mute", "unmute", "solo", "unsolo", "undo", "tempo", "bpm", "divide", "split",
+		"slice", "slicer", "track", "instrument", "sample", "automation", "pattern",
+		"mixer", "project", "downloads", "equal", "segments", "transient",
+		"song", "editor", "piano", "roll", "window"
+	};
+	auto editDistance = []( const QString& a, const QString& b )
+	{
+		const int n = a.size();
+		const int m = b.size();
+		if( n == 0 )
+		{
+			return m;
+		}
+		if( m == 0 )
+		{
+			return n;
+		}
+
+		QVector<int> prev( m + 1 );
+		QVector<int> curr( m + 1 );
+		for( int j = 0; j <= m; ++j )
+		{
+			prev[j] = j;
+		}
+		for( int i = 1; i <= n; ++i )
+		{
+			curr[0] = i;
+			for( int j = 1; j <= m; ++j )
+			{
+				const int cost = ( a[i - 1] == b[j - 1] ) ? 0 : 1;
+				curr[j] = qMin( qMin( curr[j - 1] + 1, prev[j] + 1 ), prev[j - 1] + cost );
+			}
+			prev.swap( curr );
+		}
+		return prev[m];
+	};
+	auto isSingleAdjacentTransposition = []( const QString& a, const QString& b )
+	{
+		if( a.size() != b.size() || a.size() < 2 )
+		{
+			return false;
+		}
+		int firstMismatch = -1;
+		int secondMismatch = -1;
+		for( int i = 0; i < a.size(); ++i )
+		{
+			if( a[i] != b[i] )
+			{
+				if( firstMismatch < 0 )
+				{
+					firstMismatch = i;
+				}
+				else if( secondMismatch < 0 )
+				{
+					secondMismatch = i;
+				}
+				else
+				{
+					return false;
+				}
+			}
+		}
+		if( firstMismatch < 0 || secondMismatch < 0 )
+		{
+			return false;
+		}
+		if( secondMismatch != firstMismatch + 1 )
+		{
+			return false;
+		}
+		return a[firstMismatch] == b[secondMismatch] && a[secondMismatch] == b[firstMismatch];
+	};
+
+	QStringList fuzzyTokens = tokenizeCommand( mappedCommand );
+	bool changedByFuzzy = false;
+	for( QString& token : fuzzyTokens )
+	{
+		const QString lowered = normalizeName( token );
+		if( lowered.size() < 4 || knownTokens.contains( lowered ) )
+		{
+			continue;
+		}
+
+		QString best;
+		int bestDistance = 2;
+		for( const QString& known : knownTokens )
+		{
+			int distance = editDistance( lowered, known );
+			if( distance > 1 && isSingleAdjacentTransposition( lowered, known ) )
+			{
+				distance = 1;
+			}
+			if( distance < bestDistance )
+			{
+				best = known;
+				bestDistance = distance;
+			}
+		}
+		if( bestDistance <= 1 && !best.isEmpty() )
+		{
+			token = best;
+			changedByFuzzy = true;
+		}
+	}
+	if( changedByFuzzy )
+	{
+		mappedCommand = fuzzyTokens.join( ' ' );
+		if( reason.isEmpty() )
+		{
+			reason = tr( "applied fuzzy token correction" );
+		}
+	}
+
+	// Final normalization after fuzzy correction.
+	if( QRegularExpression( R"(^\s*make\s+.+\btrack\b)",
+			QRegularExpression::CaseInsensitiveOption ).match( mappedCommand ).hasMatch() )
+	{
+		mappedCommand.replace( QRegularExpression( R"(^\s*make\b)", QRegularExpression::CaseInsensitiveOption ),
+			QStringLiteral( "create" ) );
+		setReasonIfEmpty( tr( "normalized create-track phrasing" ) );
+	}
+
+	mappedCommand = mappedCommand.simplified();
+
+	return normalizeName( mappedCommand ) != normalizeName( rawText );
+}
+
+bool AgentControlService::resolveWithOllama(
+	const QString& rawText,
+	QString& mappedCommand,
+	double& confidence,
+	QString& error ) const
+{
+	mappedCommand.clear();
+	confidence = 0.0;
+	error.clear();
+
+	const QString model = qEnvironmentVariable( "LMMS_OLLAMA_MODEL" ).trimmed();
+	if( model.isEmpty() )
+	{
+		error = tr( "LMMS_OLLAMA_MODEL is not set" );
+		return false;
+	}
+
+	const QString endpoint = qEnvironmentVariable( "LMMS_OLLAMA_URL" ).trimmed().isEmpty()
+		? QStringLiteral( "http://127.0.0.1:11434/api/chat" )
+		: qEnvironmentVariable( "LMMS_OLLAMA_URL" ).trimmed();
+
+	const QString systemPrompt =
+		QStringLiteral(
+			"You map noisy LMMS voice commands to the closest valid command. "
+			"Only map if familiar with these command families: open/show/new/create/import/load/set/add/remove/mute/solo/undo/tempo/slicer. "
+			"Return JSON only: {\"familiar\":true|false,\"command\":\"...\",\"confidence\":0.0-1.0}. "
+			"If unclear or unrelated, return familiar=false, empty command, low confidence." );
+
+	const QJsonObject payload
+	{
+		{ "model", model },
+		{ "stream", false },
+		{ "messages", QJsonArray
+			{
+				QJsonObject{ { "role", "system" }, { "content", systemPrompt } },
+				QJsonObject{ { "role", "user" }, { "content", rawText } }
+			}
+		}
+	};
+
+	QNetworkAccessManager manager;
+	QNetworkRequest request{ QUrl( endpoint ) };
+	request.setHeader( QNetworkRequest::ContentTypeHeader, QStringLiteral( "application/json" ) );
+
+	QNetworkReply *reply = manager.post( request, QJsonDocument( payload ).toJson( QJsonDocument::Compact ) );
+	QEventLoop loop;
+	QObject::connect( reply, &QNetworkReply::finished, &loop, &QEventLoop::quit );
+	QTimer::singleShot( 2500, &loop, &QEventLoop::quit );
+	loop.exec();
+
+	if( reply->isRunning() )
+	{
+		reply->abort();
+		reply->deleteLater();
+		error = tr( "Ollama timed out" );
+		return false;
+	}
+
+	if( reply->error() != QNetworkReply::NoError )
+	{
+		error = reply->errorString();
+		reply->deleteLater();
+		return false;
+	}
+
+	const QByteArray body = reply->readAll();
+	reply->deleteLater();
+	const QJsonDocument outerDoc = QJsonDocument::fromJson( body );
+	if( !outerDoc.isObject() )
+	{
+		error = tr( "Invalid Ollama response" );
+		return false;
+	}
+
+	QString content = outerDoc.object().value( "message" ).toObject().value( "content" ).toString().trimmed();
+	if( content.isEmpty() )
+	{
+		error = tr( "Ollama returned empty content" );
+		return false;
+	}
+
+	// Accept wrapped JSON in markdown fences.
+	content.remove( QRegularExpression( R"(^```(?:json)?\s*)", QRegularExpression::CaseInsensitiveOption ) );
+	content.remove( QRegularExpression( R"(\s*```$)", QRegularExpression::CaseInsensitiveOption ) );
+	const QRegularExpression jsonBlock( R"(\{[\s\S]*\})" );
+	const auto match = jsonBlock.match( content );
+	if( match.hasMatch() )
+	{
+		content = match.captured( 0 );
+	}
+
+	const QJsonDocument mappedDoc = QJsonDocument::fromJson( content.toUtf8() );
+	if( !mappedDoc.isObject() )
+	{
+		error = tr( "Ollama content was not valid JSON" );
+		return false;
+	}
+
+	const QJsonObject mappedObj = mappedDoc.object();
+	if( !mappedObj.value( "familiar" ).toBool( false ) )
+	{
+		error = tr( "Ollama marked command as unfamiliar" );
+		return false;
+	}
+
+	mappedCommand = mappedObj.value( "command" ).toString().trimmed();
+	confidence = mappedObj.value( "confidence" ).toDouble( 0.0 );
+	if( mappedCommand.isEmpty() )
+	{
+		error = tr( "Ollama returned an empty command" );
+		return false;
+	}
+	return true;
+}
+
+bool AgentControlService::maybeRunTextAgentFallback(
+	const QString& rawText,
+	QString& result,
+	QString& error )
+{
+	result.clear();
+	error.clear();
+
+	const int enabled = qEnvironmentVariableIntValue( "LMMS_TEXT_AGENT_FALLBACK" );
+	if( enabled != 1 )
+	{
+		error = tr( "LMMS_TEXT_AGENT_FALLBACK is disabled" );
+		return false;
+	}
+
+	const QString scriptPath = qEnvironmentVariable( "LMMS_TEXT_AGENT_SCRIPT" ).trimmed();
+	if( scriptPath.isEmpty() )
+	{
+		error = tr( "LMMS_TEXT_AGENT_SCRIPT is not set" );
+		return false;
+	}
+	if( !QFileInfo::exists( scriptPath ) )
+	{
+		error = tr( "Text-agent script not found: %1" ).arg( scriptPath );
+		return false;
+	}
+
+	QProcess process;
+	process.start( scriptPath, QStringList{ rawText } );
+	if( !process.waitForStarted( 1000 ) )
+	{
+		error = tr( "Failed to start text-agent script" );
+		return false;
+	}
+	if( !process.waitForFinished( 5000 ) )
+	{
+		process.kill();
+		process.waitForFinished( 500 );
+		error = tr( "Text-agent fallback timed out" );
+		return false;
+	}
+	if( process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0 )
+	{
+		error = QString::fromUtf8( process.readAllStandardError() ).trimmed();
+		if( error.isEmpty() )
+		{
+			error = tr( "Text-agent script failed" );
+		}
+		return false;
+	}
+
+	const QString output = QString::fromUtf8( process.readAllStandardOutput() ).trimmed();
+	if( output.isEmpty() )
+	{
+		error = tr( "Text-agent returned empty output" );
+		return false;
+	}
+
+	QString mappedCommand = output;
+	if( output.startsWith( '{' ) )
+	{
+		const QJsonDocument doc = QJsonDocument::fromJson( output.toUtf8() );
+		if( doc.isObject() )
+		{
+			const QJsonObject obj = doc.object();
+			mappedCommand = obj.value( "command" ).toString().trimmed();
+			if( mappedCommand.isEmpty() )
+			{
+				mappedCommand = obj.value( "text" ).toString().trimmed();
+			}
+		}
+	}
+	else
+	{
+		mappedCommand = output.section( '\n', 0, 0 ).trimmed();
+	}
+
+	if( mappedCommand.isEmpty() )
+	{
+		error = tr( "Text-agent output did not contain a command" );
+		return false;
+	}
+	if( !isFamiliarIntentText( mappedCommand ) )
+	{
+		error = tr( "Planner suggested an unfamiliar command; ignored for safety" );
+		return false;
+	}
+
+	const QString mappedResult = dispatchCommandText( mappedCommand );
+	if( isUnknownResponse( mappedResult ) )
+	{
+		error = tr( "Planner suggestion was not executable: %1" ).arg( mappedCommand );
+		return false;
+	}
+
+	result = tr( "Planner interpreted as \"%1\". %2" ).arg( mappedCommand, mappedResult );
+	return true;
 }
 
 QString AgentControlService::handleJson( const QJsonObject& obj )
@@ -320,6 +1041,11 @@ QString AgentControlService::dispatchTokens( const QStringList& tokens, const QS
 		}
 		return false;
 	};
+
+	if( handleSlicerWorkflow( rawText, tokens, result, error ) )
+	{
+		return error.isEmpty() ? result : error;
+	}
 
 	// Keep direct command mode usable for quick tempo changes from the plugin UI.
 	// Natural-language planning still lives in the text/voice agent.
@@ -581,11 +1307,23 @@ QString AgentControlService::dispatchTokens( const QStringList& tokens, const QS
 		}
 		if( tokens.size() >= 2 )
 		{
-			const QString fileName = joinTokens( tokens, 1 );
+			QString fileName = joinTokens( tokens, 1 );
+			fileName.remove( QRegularExpression(
+				R"(\bfrom\s+(?:my\s+)?downloads?(?:\s+folder)?\b.*$)",
+				QRegularExpression::CaseInsensitiveOption ) );
+			fileName = fileName.trimmed();
+
 			if( importAudioFile( fileName, error ) )
 			{
 				return tr( "Imported %1" ).arg( fileName );
 			}
+
+			const QString fuzzyDownloadsMatch = resolveDownloadsAudioQuery( fileName );
+			if( !fuzzyDownloadsMatch.isEmpty() && importAudioFile( fuzzyDownloadsMatch, error ) )
+			{
+				return tr( "Imported %1" ).arg( QFileInfo( fuzzyDownloadsMatch ).fileName() );
+			}
+
 			if( importFromDownloads( fileName, error ) )
 			{
 				return tr( "Imported %1" ).arg( fileName );
@@ -710,6 +1448,133 @@ QString AgentControlService::dispatchTokens( const QStringList& tokens, const QS
 	}
 
 	return tr( "Unknown command: %1. For natural-language tasks use lmmsagent/scripts/run_text_agent.sh" ).arg( rawText );
+}
+
+bool AgentControlService::handleSlicerWorkflow(
+	const QString& rawText,
+	const QStringList& tokens,
+	QString& result,
+	QString& error )
+{
+	if( tokens.isEmpty() )
+	{
+		return false;
+	}
+
+	const QString first = tokens[0].toLower();
+	const QString normalizedRaw = normalizeName( rawText );
+	const bool mentionsSlicer = normalizedRaw.contains( "slicer" ) ||
+		normalizedRaw.contains( "splicer" );
+	const bool mentionsImport = normalizedRaw.contains( "import" );
+	const bool mentionsDownloadFolder = normalizedRaw.contains( "fromdownloads" ) ||
+		normalizedRaw.contains( "frommydownloads" );
+	const bool mentionsTransientSlices = normalizedRaw.contains( "transient" ) ||
+		normalizedRaw.contains( "onset" );
+	const bool mentionsSegmentOrSlice = normalizedRaw.contains( "segment" ) ||
+		normalizedRaw.contains( "slice" );
+	const bool hasExplicitSegmentCount = QRegularExpression( R"(\b\d+\b)" ).match( rawText ).hasMatch();
+	const bool mentionsEqualSlices = normalizedRaw.contains( "equalsegment" ) ||
+		normalizedRaw.contains( "equalslice" ) ||
+		( mentionsSegmentOrSlice && !mentionsTransientSlices &&
+			( normalizedRaw.contains( "divideinto" ) || normalizedRaw.contains( "splitinto" ) || hasExplicitSegmentCount ) );
+
+	const bool openSlicerRequest = normalizedRaw.contains( "openslicer" ) ||
+		( first == "open" && tokens.size() >= 2 &&
+			( normalizeName( joinTokens( tokens, 1 ) ) == "slicer" ||
+			  normalizeName( joinTokens( tokens, 1 ) ) == "splicer" ) ) ||
+		( first == "slicer" && tokens.size() >= 2 &&
+			( tokens[1].compare( "open", Qt::CaseInsensitive ) == 0 ||
+			  tokens[1].compare( "show", Qt::CaseInsensitive ) == 0 ) );
+	const bool importIntoSlicerRequest = ( mentionsImport || mentionsDownloadFolder ||
+		normalizedRaw.contains( "intoslicer" ) ) && ( mentionsSlicer || openSlicerRequest );
+	const bool slicerSplitRequest = ( first == "divide" || first == "split" || first == "slice" ||
+		first == "slicer" || mentionsSlicer ) && ( mentionsEqualSlices || mentionsTransientSlices );
+
+	if( !openSlicerRequest && !importIntoSlicerRequest && !slicerSplitRequest )
+	{
+		return false;
+	}
+
+	QStringList steps;
+	if( openSlicerRequest )
+	{
+		InstrumentTrack *track = nullptr;
+		if( !ensureSlicerTrack( track, true, error ) )
+		{
+			return true;
+		}
+		if( !focusInstrumentTrackWindow( track, error ) )
+		{
+			return true;
+		}
+		steps << tr( "Opened slicer on track %1" ).arg( track->name() );
+	}
+
+	if( importIntoSlicerRequest )
+	{
+		QString importMessage;
+		const QString fileQuery = extractAudioQuery( rawText, tokens );
+		if( fileQuery.isEmpty() )
+		{
+			error = tr( "Could not detect an audio filename for slicer import" );
+			return true;
+		}
+		if( !loadFileIntoSlicer( fileQuery, importMessage, error ) )
+		{
+			return true;
+		}
+		steps << importMessage;
+	}
+
+	if( mentionsEqualSlices )
+	{
+		int segmentCount = 16;
+		const QRegularExpression beforeEqual( R"((\d+)\s+equal\s+(?:segments?|slices?))",
+			QRegularExpression::CaseInsensitiveOption );
+		const QRegularExpression afterEqual( R"(equal\s+(?:segments?|slices?)(?:\s+of)?\s+(\d+))",
+			QRegularExpression::CaseInsensitiveOption );
+
+		auto match = beforeEqual.match( rawText );
+		if( !match.hasMatch() )
+		{
+			match = afterEqual.match( rawText );
+		}
+		if( match.hasMatch() )
+		{
+			bool ok = false;
+			const int parsed = match.captured( 1 ).toInt( &ok );
+			if( ok )
+			{
+				segmentCount = parsed;
+			}
+		}
+		segmentCount = qBound( 1, segmentCount, 128 );
+
+		QString sliceMessage;
+		if( !sliceSlicerEqual( segmentCount, sliceMessage, error ) )
+		{
+			return true;
+		}
+		steps << sliceMessage;
+	}
+
+	if( mentionsTransientSlices )
+	{
+		QString sliceMessage;
+		if( !sliceSlicerByTransients( sliceMessage, error ) )
+		{
+			return true;
+		}
+		steps << sliceMessage;
+	}
+
+	if( steps.isEmpty() )
+	{
+		return false;
+	}
+
+	result = steps.join( ". " );
+	return true;
 }
 
 QJsonObject AgentControlService::dispatchTool( const QString& toolName, const QJsonObject& args )
@@ -1479,6 +2344,7 @@ bool AgentControlService::createInstrumentTrack( const QString& pluginName, QStr
 			track->loadInstrument( resolvedPlugin );
 		}
 	} );
+	m_lastLoadedInstrument = resolvedPlugin;
 	result = tr( "Queued instrument %1" ).arg( displayName );
 	return true;
 }
@@ -1512,6 +2378,7 @@ bool AgentControlService::importAudioFile( const QString& path, QString& error )
 
 	clip->setSampleFile( fullPath );
 	clip->updateLength();
+	m_lastImportedAudioPath = fullPath;
 	return true;
 }
 
@@ -1732,6 +2599,251 @@ InstrumentTrack* AgentControlService::findInstrumentTrack( const QString& trackN
 	return dynamic_cast<InstrumentTrack *>( findTrackByName( trackName ) );
 }
 
+InstrumentTrack* AgentControlService::findLastSlicerTrack() const
+{
+	Song *song = Engine::getSong();
+	if( song == nullptr )
+	{
+		return nullptr;
+	}
+
+	const auto &tracks = song->tracks();
+	for( auto it = tracks.rbegin(); it != tracks.rend(); ++it )
+	{
+		auto *instrumentTrack = dynamic_cast<InstrumentTrack *>( *it );
+		if( instrumentTrack == nullptr || instrumentTrack->instrument() == nullptr )
+		{
+			continue;
+		}
+
+		const QString pluginName = normalizeName( instrumentTrack->instrument()->nodeName() );
+		const QString displayName = normalizeName( instrumentTrack->instrumentName() );
+		if( pluginName == "slicert" || displayName.contains( "slicer" ) )
+		{
+			return instrumentTrack;
+		}
+	}
+
+	return nullptr;
+}
+
+bool AgentControlService::ensureSlicerTrack( InstrumentTrack*& track, bool createIfMissing, QString& error )
+{
+	track = nullptr;
+
+	if( !m_selectedTrackName.isEmpty() )
+	{
+		auto *selectedTrack = dynamic_cast<InstrumentTrack *>( findTrackByName( m_selectedTrackName ) );
+		if( selectedTrack != nullptr && selectedTrack->instrument() != nullptr &&
+			normalizeName( selectedTrack->instrument()->nodeName() ) == "slicert" )
+		{
+			track = selectedTrack;
+			return true;
+		}
+	}
+
+	track = findLastSlicerTrack();
+	if( track != nullptr )
+	{
+		m_selectedTrackName = track->name();
+		return true;
+	}
+
+	if( !createIfMissing )
+	{
+		error = tr( "No slicer track is available. Say 'open slicer' first." );
+		return false;
+	}
+
+	Song *song = Engine::getSong();
+	if( song == nullptr )
+	{
+		error = tr( "No active song" );
+		return false;
+	}
+
+	track = dynamic_cast<InstrumentTrack *>( Track::create( Track::Type::Instrument, song ) );
+	if( track == nullptr )
+	{
+		error = tr( "Failed to create slicer track" );
+		return false;
+	}
+
+	if( track->loadInstrument( "slicert" ) == nullptr )
+	{
+		error = tr( "Failed to load slicer instrument" );
+		return false;
+	}
+
+	m_selectedTrackName = track->name();
+	return true;
+}
+
+bool AgentControlService::focusInstrumentTrackWindow( InstrumentTrack* track, QString& error )
+{
+	if( track == nullptr )
+	{
+		error = tr( "No slicer track is available" );
+		return false;
+	}
+
+	auto *guiApp = gui::getGUI();
+	if( guiApp == nullptr || guiApp->songEditor() == nullptr || guiApp->songEditor()->m_editor == nullptr )
+	{
+		error = tr( "GUI is not ready" );
+		return false;
+	}
+
+	auto *songEditorWindow = guiApp->songEditor();
+	songEditorWindow->show();
+	if( songEditorWindow->parentWidget() )
+	{
+		songEditorWindow->parentWidget()->show();
+		songEditorWindow->parentWidget()->raise();
+		songEditorWindow->parentWidget()->activateWindow();
+	}
+
+	for( int attempt = 0; attempt < 8; ++attempt )
+	{
+		for( auto *trackView : songEditorWindow->m_editor->trackViews() )
+		{
+			if( trackView == nullptr || trackView->getTrack() != track )
+			{
+				continue;
+			}
+
+			auto *instrumentView = dynamic_cast<gui::InstrumentTrackView *>( trackView );
+			if( instrumentView == nullptr )
+			{
+				continue;
+			}
+
+			QMetaObject::invokeMethod( instrumentView, "toggleInstrumentWindow",
+				Qt::DirectConnection, Q_ARG( bool, true ) );
+			auto *trackWindow = instrumentView->getInstrumentTrackWindow();
+			if( trackWindow != nullptr )
+			{
+				trackWindow->show();
+				trackWindow->raise();
+				trackWindow->setFocus();
+				if( trackWindow->parentWidget() )
+				{
+					trackWindow->parentWidget()->show();
+					trackWindow->parentWidget()->raise();
+					trackWindow->parentWidget()->activateWindow();
+				}
+			}
+			return true;
+		}
+
+		QCoreApplication::processEvents( QEventLoop::AllEvents, 20 );
+		QThread::msleep( 60 );
+	}
+
+	error = tr( "Could not focus slicer window yet. Try again in a moment." );
+	return false;
+}
+
+bool AgentControlService::loadFileIntoSlicer( const QString& fileQuery, QString& result, QString& error )
+{
+	InstrumentTrack *track = nullptr;
+	if( !ensureSlicerTrack( track, true, error ) )
+	{
+		return false;
+	}
+
+	QString fullPath = canonicalPath( fileQuery );
+	if( fullPath.isEmpty() )
+	{
+		fullPath = resolveDownloadsAudioQuery( fileQuery );
+	}
+	if( fullPath.isEmpty() )
+	{
+		error = tr( "Audio file not found: %1" ).arg( fileQuery );
+		return false;
+	}
+	if( track->instrument() == nullptr )
+	{
+		error = tr( "Slicer instrument is not loaded" );
+		return false;
+	}
+
+	track->instrument()->loadFile( fullPath );
+	m_selectedTrackName = track->name();
+	m_lastImportedAudioPath = fullPath;
+	result = tr( "Loaded %1 into slicer" ).arg( QFileInfo( fullPath ).fileName() );
+	return true;
+}
+
+bool AgentControlService::sliceSlicerEqual( int segments, QString& result, QString& error )
+{
+	InstrumentTrack *track = nullptr;
+	if( !ensureSlicerTrack( track, false, error ) )
+	{
+		return false;
+	}
+	if( track->instrument() == nullptr || normalizeName( track->instrument()->nodeName() ) != "slicert" )
+	{
+		error = tr( "Selected track is not a slicer track" );
+		return false;
+	}
+
+	const int boundedSegments = qBound( 1, segments, 128 );
+	QDomDocument document;
+	QDomElement trackState = document.createElement( "track" );
+	document.appendChild( trackState );
+	track->saveTrackSpecificSettings( document, trackState, false );
+
+	QDomElement instrumentState = trackState.firstChildElement( "instrument" );
+	if( instrumentState.isNull() )
+	{
+		error = tr( "Slicer settings are not available" );
+		return false;
+	}
+
+	QDomElement pluginState = instrumentState.firstChildElement();
+	if( pluginState.isNull() )
+	{
+		error = tr( "Slicer plugin state is missing" );
+		return false;
+	}
+
+	pluginState.setAttribute( "totalSlices", boundedSegments + 1 );
+	for( int i = 0; i <= boundedSegments; ++i )
+	{
+		const double ratio = static_cast<double>( i ) / static_cast<double>( boundedSegments );
+		pluginState.setAttribute( QString( "slice_%1" ).arg( i ),
+			QString::number( ratio, 'f', 8 ) );
+	}
+
+	track->loadTrackSpecificSettings( trackState );
+	result = tr( "Set slicer to %1 equal segments" ).arg( boundedSegments );
+	return true;
+}
+
+bool AgentControlService::sliceSlicerByTransients( QString& result, QString& error )
+{
+	InstrumentTrack *track = nullptr;
+	if( !ensureSlicerTrack( track, false, error ) )
+	{
+		return false;
+	}
+	if( track->instrument() == nullptr || normalizeName( track->instrument()->nodeName() ) != "slicert" )
+	{
+		error = tr( "Selected track is not a slicer track" );
+		return false;
+	}
+
+	if( !QMetaObject::invokeMethod( track->instrument(), "updateSlices", Qt::DirectConnection ) )
+	{
+		error = tr( "Failed to trigger transient slice detection" );
+		return false;
+	}
+
+	result = tr( "Updated slicer using transient detection" );
+	return true;
+}
+
 SampleTrack* AgentControlService::createSampleTrack( const QString& name ) const
 {
 	Song *song = Engine::getSong();
@@ -1772,6 +2884,53 @@ bool AgentControlService::addSampleClip( SampleTrack *track, const QString& samp
 	return true;
 }
 
+QString AgentControlService::extractAudioQuery( const QString& rawText, const QStringList& tokens ) const
+{
+	const QString normalized = normalizeName( rawText );
+	if( ( normalized.contains( "thissample" ) || normalized.contains( "thisaudio" ) ||
+		normalized.contains( "thatsample" ) || normalized.contains( "thataudio" ) ) &&
+		!m_lastImportedAudioPath.isEmpty() && QFileInfo::exists( m_lastImportedAudioPath ) )
+	{
+		return m_lastImportedAudioPath;
+	}
+
+	const QRegularExpression quotedPathPattern(
+		R"(["']([^"']+\.(?:wav|wave|aif|aiff|flac|ogg|mp3|m4a))["'])",
+		QRegularExpression::CaseInsensitiveOption );
+	auto match = quotedPathPattern.match( rawText );
+	if( match.hasMatch() )
+	{
+		return match.captured( 1 ).trimmed();
+	}
+
+	const QRegularExpression fileWithExtPattern(
+		R"(([^\s,]+?\.(?:wav|wave|aif|aiff|flac|ogg|mp3|m4a)))",
+		QRegularExpression::CaseInsensitiveOption );
+	match = fileWithExtPattern.match( rawText );
+	if( match.hasMatch() )
+	{
+		return match.captured( 1 ).trimmed();
+	}
+
+	if( !tokens.isEmpty() && ( tokens[0].compare( "import", Qt::CaseInsensitive ) == 0 ||
+		tokens[0].compare( "load", Qt::CaseInsensitive ) == 0 ) )
+	{
+		QString query = joinTokens( tokens, 1 );
+		query.remove( QRegularExpression( R"(\b(?:into|to)\s+slicer\b)",
+			QRegularExpression::CaseInsensitiveOption ) );
+		query.remove( QRegularExpression( R"(\bfrom\s+(?:my\s+)?downloads?(?:\s+folder)?\b.*$)",
+			QRegularExpression::CaseInsensitiveOption ) );
+		query = query.trimmed();
+		if( !query.isEmpty() && query.compare( "audio", Qt::CaseInsensitive ) != 0 &&
+			query.compare( "file", Qt::CaseInsensitive ) != 0 )
+		{
+			return query;
+		}
+	}
+
+	return {};
+}
+
 QString AgentControlService::resolveDownloadsFile( const QString& fileName ) const
 {
 	if( fileName.isEmpty() )
@@ -1786,6 +2945,62 @@ QString AgentControlService::resolveDownloadsFile( const QString& fileName ) con
 	}
 	const QString absPath = QDir( downloads ).filePath( fileName );
 	return QFile::exists( absPath ) ? absPath : QString{};
+}
+
+QString AgentControlService::resolveDownloadsAudioQuery( const QString& query ) const
+{
+	QString cleaned = query.trimmed();
+	if( cleaned.isEmpty() )
+	{
+		return {};
+	}
+	cleaned.remove( '"' );
+	cleaned.remove( '\'' );
+	cleaned = cleaned.trimmed();
+
+	const QString direct = resolveDownloadsFile( cleaned );
+	if( !direct.isEmpty() )
+	{
+		return direct;
+	}
+
+	QString downloads = QStandardPaths::writableLocation( QStandardPaths::DownloadLocation );
+	if( downloads.isEmpty() )
+	{
+		downloads = QDir::homePath() + "/Downloads";
+	}
+	QDir downloadsDir( downloads );
+	if( !downloadsDir.exists() )
+	{
+		return {};
+	}
+
+	const QString wanted = normalizeName( cleaned );
+	QString partialMatch;
+	const QFileInfoList files = downloadsDir.entryInfoList( QDir::Files | QDir::Readable );
+	for( const QFileInfo& info : files )
+	{
+		const QString suffix = info.suffix().toLower();
+		if( suffix != "wav" && suffix != "wave" && suffix != "aif" && suffix != "aiff" &&
+			suffix != "flac" && suffix != "ogg" && suffix != "mp3" && suffix != "m4a" )
+		{
+			continue;
+		}
+
+		const QString fileName = normalizeName( info.fileName() );
+		const QString baseName = normalizeName( info.completeBaseName() );
+		if( !wanted.isEmpty() && ( fileName == wanted || baseName == wanted ) )
+		{
+			return info.absoluteFilePath();
+		}
+		if( partialMatch.isEmpty() && !wanted.isEmpty() &&
+			( fileName.contains( wanted ) || baseName.contains( wanted ) || wanted.contains( baseName ) ) )
+		{
+			partialMatch = info.absoluteFilePath();
+		}
+	}
+
+	return partialMatch;
 }
 
 QString AgentControlService::defaultKickSample() const

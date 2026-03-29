@@ -21,6 +21,7 @@ class AgentControlView : public ToolPluginView
 	Q_OBJECT
 public:
 	explicit AgentControlView( AgentControlPlugin *plugin );
+	~AgentControlView() override;
 
 private slots:
 	void runCommand();
@@ -33,6 +34,14 @@ private:
 	void setVoiceUiState( bool recording );
 	QString ffmpegPath() const;
 	QString whisperPath() const;
+	QString whisperModelPath() const;
+	QString whisperServiceBaseUrl() const;
+	QString whisperServiceModel() const;
+	bool useWhisperService() const;
+	bool ensureWhisperServiceReady( QString& error );
+	bool checkWhisperServiceHealth( int timeoutMs, QString& error ) const;
+	bool transcribeViaWhisperService( const QString &audioPath, QString &transcript, QString& error ) const;
+	void shutdownWhisperService();
 	QString microphoneDevice() const;
 	QStringList ffmpegCaptureArgs( const QString &outputPath ) const;
 	bool runWhisperAndDispatch( const QString &audioPath );
@@ -44,6 +53,7 @@ private:
 	QPushButton *m_voiceStartButton;
 	QPushButton *m_voiceStopButton;
 	QProcess *m_voiceRecordProcess;
+	QProcess *m_whisperServiceProcess;
 	QString m_voiceAudioPath;
 };
 

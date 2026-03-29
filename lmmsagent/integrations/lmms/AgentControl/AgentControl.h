@@ -59,6 +59,14 @@ private:
 
 	AgentControlService();
 
+	QString dispatchCommandText(const QString& rawText);
+	QStringList tokenizeCommand(const QString& rawText) const;
+	bool isUnknownResponse(const QString& response) const;
+	bool isFamiliarIntentText(const QString& rawText) const;
+	bool applyHeuristicMappings(const QString& rawText, QString& mappedCommand, QString& reason) const;
+	bool resolveWithOllama(const QString& rawText, QString& mappedCommand, double& confidence, QString& error) const;
+	bool maybeRunTextAgentFallback(const QString& rawText, QString& result, QString& error);
+
 	QString dispatchTokens(const QStringList& tokens, const QString& rawText);
 	QJsonObject dispatchTool(const QString& toolName, const QJsonObject& args);
 	QJsonObject projectStateObject() const;
@@ -107,6 +115,12 @@ private:
 
 	bool createTrack(Track::Type type, QString& result, QString& error);
 	bool createInstrumentTrack(const QString& pluginName, QString& result, QString& error);
+	bool handleSlicerWorkflow(const QString& rawText, const QStringList& tokens, QString& result, QString& error);
+	bool ensureSlicerTrack(InstrumentTrack*& track, bool createIfMissing, QString& error);
+	bool focusInstrumentTrackWindow(InstrumentTrack* track, QString& error);
+	bool loadFileIntoSlicer(const QString& fileQuery, QString& result, QString& error);
+	bool sliceSlicerEqual(int segments, QString& result, QString& error);
+	bool sliceSlicerByTransients(QString& result, QString& error);
 	bool showWindowCommand(const QString& windowName, QString& result, QString& error);
 	bool showToolCommand(const QString& toolName, QString& result, QString& error);
 	bool newProject(QString& result, QString& error);
@@ -119,11 +133,14 @@ private:
 	Track* findTrackByName(const QString& trackName) const;
 	Track* findLastTrackOfTypes(const QList<Track::Type>& types) const;
 	InstrumentTrack* findInstrumentTrack(const QString& trackName) const;
+	InstrumentTrack* findLastSlicerTrack() const;
 	SampleTrack* createSampleTrack(const QString& name) const;
 	EffectChain* effectChainForTrack(Track* track) const;
 
 	bool addSampleClip(SampleTrack* track, const QString& samplePath, int tickPos);
+	QString extractAudioQuery(const QString& rawText, const QStringList& tokens) const;
 	QString resolveDownloadsFile(const QString& fileName) const;
+	QString resolveDownloadsAudioQuery(const QString& query) const;
 	QString defaultKickSample() const;
 	QString defaultSnareSample() const;
 	QString canonicalPath(const QString& path) const;
@@ -138,6 +155,8 @@ private:
 	int m_actionCounter = 0;
 	bool m_projectTransitionQueued = false;
 	QString m_selectedTrackName;
+	QString m_lastImportedAudioPath;
+	QString m_lastLoadedInstrument;
 };
 
 class AgentControlPlugin : public ToolPlugin
