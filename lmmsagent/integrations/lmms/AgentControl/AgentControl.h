@@ -3,6 +3,9 @@
 
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QByteArray>
+#include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
 #include <QSet>
@@ -34,6 +37,7 @@ public:
 
 	QString handleCommand(const QString& text);
 	QString handleJson(const QJsonObject& obj);
+	QJsonObject handleRequest(const QJsonObject& obj);
 
 signals:
 	void logMessage(const QString& msg);
@@ -45,14 +49,61 @@ private slots:
 	void onSocketClosed();
 
 private:
+	struct Snapshot
+	{
+		QString id;
+		QString label;
+		QJsonObject state;
+		int actionCounter = 0;
+	};
+
 	AgentControlService();
 
 	QString dispatchTokens(const QStringList& tokens, const QString& rawText);
+	QJsonObject dispatchTool(const QString& toolName, const QJsonObject& args);
+	QJsonObject projectStateObject() const;
+	QJsonObject trackObject(const Track* track, int index) const;
+	QJsonArray trackArray() const;
+	QJsonArray listPatternArray() const;
+	QJsonObject diffState(const QJsonObject& before, const QJsonObject& after) const;
+	QJsonObject successResponse(const QJsonObject& result = QJsonObject(),
+		const QJsonObject& stateDelta = QJsonObject(),
+		const QJsonArray& warnings = QJsonArray()) const;
+	QJsonObject errorResponse(const QString& errorCode, const QString& errorMessage,
+		const QJsonArray& warnings = QJsonArray()) const;
+	QString trackTypeName(Track::Type type) const;
+	Track* resolveTrackRef(const QJsonObject& args) const;
+	InstrumentTrack* resolveInstrumentTrack(const QJsonObject& args) const;
+	SampleTrack* resolveSampleTrack(const QJsonObject& args) const;
+	QString resolveInstrumentPlugin(const QString& pluginName, QString& displayName) const;
+	QString resolveEffectPlugin(const QString& effectName, QString& displayName) const;
+	QString toCommandResponseText(const QJsonObject& response) const;
+	QJsonArray effectArrayForTrack(Track* track) const;
+	QJsonArray availableWindows() const;
+	QJsonArray availableTools() const;
+	QJsonArray availableInstruments() const;
+	QJsonArray availableEffects() const;
+	QJsonArray searchProjectAudio(const QString& query) const;
+	bool createSnapshot(const QString& label, QJsonObject& result, QString& error);
+	bool rollbackSnapshot(const QString& snapshotId, QJsonObject& result, QString& error);
+	bool undoLastAction(QJsonObject& result, QString& error);
+	bool diffSinceSnapshot(const QString& snapshotId, QJsonObject& result, QString& error) const;
+	bool loadSampleToTrack(const QString& samplePath, const QString& trackName, QJsonObject& result, QString& error);
+	bool setTempoValue(int tempo, QJsonObject& result, QString& error);
+	bool renameTrack(const QString& trackName, const QString& newName, QJsonObject& result, QString& error);
+	bool selectTrack(const QString& trackName, QJsonObject& result, QString& error);
+	bool setTrackMute(const QString& trackName, bool mute, QJsonObject& result, QString& error);
+	bool setTrackSolo(const QString& trackName, bool solo, QJsonObject& result, QString& error);
+	bool createPatternClip(const QJsonObject& args, QJsonObject& result, QString& error);
+	bool addNotesToPattern(const QJsonObject& args, QJsonObject& result, QString& error);
+	bool addStepsToPattern(const QJsonObject& args, QJsonObject& result, QString& error);
+	int trackIndex(const Track* track) const;
 
 	bool importFromDownloads(const QString& fileName, QString& error);
 	bool importAudioFile(const QString& path, QString& error);
 	bool importProjectFile(const QString& path, QString& error);
 	bool addKickPattern(QString& error);
+	bool addSnarePattern(QString& error);
 
 	bool createTrack(Track::Type type, QString& result, QString& error);
 	bool createInstrumentTrack(const QString& pluginName, QString& result, QString& error);
@@ -74,12 +125,19 @@ private:
 	bool addSampleClip(SampleTrack* track, const QString& samplePath, int tickPos);
 	QString resolveDownloadsFile(const QString& fileName) const;
 	QString defaultKickSample() const;
+	QString defaultSnareSample() const;
 	QString canonicalPath(const QString& path) const;
 	QString joinTokens(const QStringList& tokens, int startIndex) const;
 	QString normalizeName(const QString& text) const;
 
 	QTcpServer m_server;
 	QSet<QTcpSocket*> m_clients;
+	QHash<QTcpSocket*, QByteArray> m_readBuffers;
+	QHash<QString, Snapshot> m_snapshots;
+	int m_snapshotCounter = 0;
+	int m_actionCounter = 0;
+	bool m_projectTransitionQueued = false;
+	QString m_selectedTrackName;
 };
 
 class AgentControlPlugin : public ToolPlugin
