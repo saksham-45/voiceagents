@@ -101,7 +101,11 @@
     if (p.intent === "MEDIA") return "MEDIA: " + (p.slots.action || "");
     if (p.intent === "PAGE_NAV") return "PAGE: " + (p.slots.direction || "");
     if (p.intent === "FORM") return "FORM: " + (p.slots.action || "");
-    if (p.intent === "YT_ACTION") return "YT: " + (p.slots.action || "").replace(/_/g, " ");
+    if (p.intent === "YT_ACTION") {
+      var ya = (p.slots.action || "").replace(/_/g, " ");
+      if (p.slots.action === "add_comment" && p.slots.text) return "YT: comment \"" + (p.slots.text.length > 40 ? p.slots.text.substring(0, 40) + "…" : p.slots.text) + "\"";
+      return "YT: " + ya;
+    }
     if (p.intent === "SYSTEM") return "Stopped listening";
     if (p.intent === "UNKNOWN") return "? (not a command)";
     return p.intent;

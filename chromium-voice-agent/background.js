@@ -68,6 +68,7 @@ var LLM_SYSTEM_PROMPT = [
   "YT_ACTION sort_comments: top comments, best comments, newest comments, sort newest, sort top",
   "  slots: {action:'sort_comments', sort:'top|newest'}",
   "YT_ACTION add_comment: comment, add comment, write comment, leave a comment, comment something, type a comment",
+  "  With spoken text: \"comment thanks for the video\" → slots include text:\"thanks for the video\"",
   "YT_ACTION autoplay_on: autoplay on, turn on autoplay, enable autoplay",
   "YT_ACTION autoplay_off: autoplay off, turn off autoplay, disable autoplay, stop autoplay",
   "YT_ACTION go_to_channel: go to channel, channel page, visit channel, who made this, who uploaded this",
@@ -111,6 +112,7 @@ var LLM_SYSTEM_PROMPT = [
   "- Always return valid JSON: {\"intent\":\"...\", \"slots\":{...}}",
   "- For MEDIA, always include {\"action\":\"...\"} in slots",
   "- For YT_ACTION, always include {\"action\":\"...\"} in slots",
+  "- For spoken comments like \"comment nice video\", use {\"intent\":\"YT_ACTION\",\"slots\":{\"action\":\"add_comment\",\"text\":\"nice video\"}}",
   "- For TAB_OP, always include {\"action\":\"...\"} in slots",
   "- Pick the CLOSEST matching command. Be generous — 'go up' = SCROLL up, 'please like' = MEDIA like",
   "- For timestamps like '2:30' convert to seconds: 150",
@@ -368,6 +370,11 @@ function parseCommand(text) {
   if (/^(?:(?:go\s+to|show|scroll\s+to|view|open)\s+)?(?:the\s+)?comments?(?:\s+section)?$/.test(t)) return { intent: "YT_ACTION", slots: { action: "show_comments" } };
   if (/^(?:sort\s+(?:by\s+)?)?(?:top|best)\s+comments?$/.test(t)) return { intent: "YT_ACTION", slots: { action: "sort_comments", sort: "top" } };
   if (/^(?:sort\s+(?:by\s+)?)?(?:new|newest|recent|latest)\s+(?:comments?\s+)?(?:first)?$/.test(t)) return { intent: "YT_ACTION", slots: { action: "sort_comments", sort: "newest" } };
+  // "comment thanks for watching" / "add comment lol" — body after the phrase becomes comment text
+  var ytCommentBody = t.match(/^comment\s+(.+)$/);
+  if (ytCommentBody && ytCommentBody[1].trim()) return { intent: "YT_ACTION", slots: { action: "add_comment", text: ytCommentBody[1].trim() } };
+  var ytCommentBody2 = t.match(/^(?:add|write|leave|post)\s+comment\s+(.+)$/);
+  if (ytCommentBody2 && ytCommentBody2[1].trim()) return { intent: "YT_ACTION", slots: { action: "add_comment", text: ytCommentBody2[1].trim() } };
   if (/^(?:add|write|leave|post)\s+(?:a\s+)?comment$/.test(t)) return { intent: "YT_ACTION", slots: { action: "add_comment" } };
 
   // ── Shorts ──
@@ -814,7 +821,7 @@ function execute(command) {
   // YT_ACTION — YouTube-specific non-media actions
   // ══════════════════════════════════════
   if (intent === "YT_ACTION") {
-    inject(function(action, extra) {
+    inject(function(action, extra, commentText) {
       var host = location.hostname;
       if (!host.includes("youtube.com")) return { ok: false, msg: "Not on YouTube" };
 
@@ -1066,9 +1073,26 @@ function execute(command) {
         return { ok: false };
       }
       if (action === "add_comment") {
+        var body = (commentText && String(commentText).trim()) || "";
         var commentBox = document.querySelector("#placeholder-area, #simplebox-placeholder, ytd-comment-simplebox-renderer #placeholder-area");
-        if (commentBox) { commentBox.click(); return { ok: true }; }
-        return { ok: false };
+        if (commentBox) commentBox.click();
+        if (!body) return { ok: !!commentBox };
+        function fillYtComment(attempt) {
+          var root = document.querySelector("ytd-comment-simplebox-renderer #contenteditable-root") ||
+            document.querySelector("#simplebox #contenteditable-root") ||
+            document.querySelector("#contenteditable-root[contenteditable='true']") ||
+            document.querySelector("ytd-commentbox-web #contenteditable-root");
+          if (root && root.getAttribute("contenteditable") === "true") {
+            root.focus();
+            root.textContent = body;
+            root.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: body }));
+            return true;
+          }
+          if (attempt < 8) setTimeout(function() { fillYtComment(attempt + 1); }, 200);
+          return false;
+        }
+        setTimeout(function() { fillYtComment(0); }, 150);
+        return { ok: true };
       }
 
       // ── Shorts ──
@@ -1119,7 +1143,7 @@ function execute(command) {
       }
 
       return { ok: false };
-    }, [slots.action, slots.sort || slots.tab || slots.filter_type ? slots : (slots.value || 0)], function(result) {
+    }, [slots.action, (slots.sort || slots.tab || slots.filter_type) ? slots : (slots.value || 0), slots.text || ""], function(result) {
       if (result && !result.ok && result.msg) speak(result.msg);
       else if (result && !result.ok) speak("Could not do that on this page");
     });
