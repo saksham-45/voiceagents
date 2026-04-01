@@ -14,7 +14,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  width: 340px;
+  width: 380px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -151,7 +151,26 @@ header h1 { font-size: 15px; font-weight: 600; flex: 1; }
   outline: none;
 }
 #agent-goal:focus { border-color: var(--accent); }
-.agent-beta-actions { display: flex; gap: 6px; }
+.agent-max-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text2);
+  margin-bottom: 8px;
+}
+.agent-max-label input {
+  width: 52px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
+}
+.agent-beta-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.agent-beta-actions.agent-row2 { margin-top: 6px; }
 .agent-btn {
   flex: 1;
   height: 30px;
@@ -171,7 +190,7 @@ header h1 { font-size: 15px; font-weight: 600; flex: 1; }
 .agent-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .agent-out {
   margin-top: 8px;
-  max-height: 100px;
+  max-height: 180px;
   overflow: auto;
   padding: 8px;
   font-size: 9px;

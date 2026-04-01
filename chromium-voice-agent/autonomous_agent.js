@@ -1,4 +1,4 @@
-// autonomous_agent.js — local Ollama planner + page snapshot (Phase 1)
+// autonomous_agent.js — local Ollama planner + page snapshot (Phase 1–2 loop uses history)
 // Loaded by background.js via importScripts. Keep interactive list logic in sync
 // between collectSnapshot and clickElementByIndex (same selector + visibility rules).
 "use strict";
@@ -21,7 +21,7 @@ var AUTONOMOUS_SYSTEM_PROMPT = [
   "- click: { \"target_id\": \"e_N\" } using ids from the snapshot only",
   "- scroll: { \"direction\": \"up\" | \"down\", \"amount\": \"small\" | \"medium\" | \"large\" } optional amount default medium",
   "- navigate: { \"url\": \"https://...\" } must be https (or http only for localhost)",
-  "- type: { \"target_id\": \"e_N\", \"text\": \"...\" } (execution may be limited in early builds)",
+  "- type: { \"target_id\": \"e_N\", \"text\": \"...\" } for text/search inputs and textareas (focuses, sets value, fires input/change)",
   "- wait: { \"ms\": number } max 5000",
   "- done: {} when the USER_GOAL is fully achieved on this page",
   "- none: {} when you cannot safely act (explain in reason)",
@@ -30,7 +30,9 @@ var AUTONOMOUS_SYSTEM_PROMPT = [
   "- Prefer the smallest action that moves toward USER_GOAL.",
   "- Never invent element ids. Only use e_0 .. e_N from the snapshot.",
   "- If the goal needs a different site, use navigate.",
-  "- If you are unsure, use none."
+  "- If you are unsure, use none.",
+  "",
+  "RECENT_HISTORY_JSON (when present) lists prior steps in this run: each entry may include tool, args, reason, execOk, execError, and verify (urlChanged, elementCountDelta, elementCountAfter). Use it to avoid repeating failed actions and to decide if the goal is met."
 ].join("\n");
 
 function collectSnapshot(tabId, callback) {
@@ -130,6 +132,80 @@ function clickElementByIndex(tabId, index, callback) {
   );
 }
 
+function typeElementByIndex(tabId, index, text, callback) {
+  var safeText = String(text != null ? text : "").slice(0, 2000);
+  chrome.scripting.executeScript(
+    {
+      target: { tabId: tabId },
+      args: [index, safeText],
+      func: function(idx, str) {
+        function vaInteractiveSelector() {
+          return 'a[href], button, [role="button"], input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])';
+        }
+        var sel = document.querySelectorAll(vaInteractiveSelector());
+        var visible = [];
+        for (var i = 0; i < sel.length && visible.length < 80; i++) {
+          var el = sel[i];
+          var r = el.getBoundingClientRect();
+          if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.top > window.innerHeight) continue;
+          visible.push(el);
+        }
+        if (idx < 0 || idx >= visible.length) {
+          return { ok: false, error: "index out of range", count: visible.length };
+        }
+        var node = visible[idx];
+        try {
+          node.scrollIntoView({ block: "center", inline: "nearest" });
+          node.focus();
+          var tag = node.tagName.toLowerCase();
+          var typ = (node.getAttribute("type") || "text").toLowerCase();
+          var typeableInput =
+            tag === "input" &&
+            ["text", "search", "email", "url", "tel", "password", "number"].indexOf(typ) >= 0;
+          if (tag === "textarea" || typeableInput) {
+            var proto = tag === "textarea" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            var desc = Object.getOwnPropertyDescriptor(proto, "value");
+            if (desc && desc.set) desc.set.call(node, str);
+            else node.value = str;
+            try {
+              node.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertFromPaste", data: str }));
+            } catch (e1) {
+              node.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+            node.dispatchEvent(new Event("change", { bubbles: true }));
+            return { ok: true };
+          }
+          if (node.isContentEditable || node.getAttribute("contenteditable") === "true") {
+            node.textContent = str;
+            try {
+              node.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertFromPaste", data: str }));
+            } catch (e2) {
+              node.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+            return { ok: true };
+          }
+          return { ok: false, error: "element is not typeable (tag:" + tag + " type:" + typ + ")" };
+        } catch (e) {
+          return { ok: false, error: String(e && e.message ? e.message : e) };
+        }
+      }
+    },
+    function(results) {
+      if (chrome.runtime.lastError) {
+        callback(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      if (!results || !results.length) {
+        callback(new Error("no type result"));
+        return;
+      }
+      var r = results[0].result;
+      if (!r.ok) callback(new Error(r.error || "type failed"));
+      else callback(null, r);
+    }
+  );
+}
+
 function parseToolJson(text) {
   var trimmed = (text || "").trim();
   var match = trimmed.match(/\{[\s\S]*\}/);
@@ -217,5 +293,6 @@ var AutonomousAgent = {
   },
   collectSnapshot: collectSnapshot,
   clickElementByIndex: clickElementByIndex,
+  typeElementByIndex: typeElementByIndex,
   planStep: planStep
 };

@@ -37,17 +37,21 @@ Local-first, Chromium-only, planner runs on **Ollama** on your machine. This doc
 
 **Review checkpoint:** Open a normal `https` page, run **Plan 1 step**, then **Run that step** if the tool is not `done` / `none`. Set `AUTONOMOUS_MODEL` in `autonomous_agent.js` to match `ollama list`.
 
-## Phase 2: Multi-step runner
+## Phase 2: Multi-step runner (shipped)
 
 **Goal:** **Loop**: snapshot → plan → execute → verify → repeat until `done` or limits.
 
 **Deliverables:**
 
-- Internal **run state**: `goal`, `stepCount`, `maxSteps`, `history[]`, `lastObservation`, `lastError`.
-- **Verification** hooks: URL changed, element count changed, text appears (cheap checks before asking the model again).
-- **Pause / resume / cancel** messages and popup indicators.
+- [x] Internal **run state** in `background.js` (`autonomousRunner`): `goal`, `tabId`, `stepIndex`, `maxSteps`, `history[]`, `cancelRequested`, `pauseRequested`, `lastError`.
+- [x] **Verification** after each action: `urlChanged`, `elementCountBefore` / `After`, `elementCountDelta`, `titleAfter` (second snapshot after a short settle delay; longer after `navigate`).
+- [x] **Messages:** `AUTONOMOUS_RUN_LOOP`, `AUTONOMOUS_CANCEL`, `AUTONOMOUS_PAUSE`, `AUTONOMOUS_RESUME`, `AUTONOMOUS_STATUS`.
+- [x] **Broadcasts** to popup: `AUTONOMOUS_LOOP_EVENT` (`started`, `planned`, `step_done`, `paused`, `resumed`, `finished`, `cancelled`, `limit`, `error`).
+- [x] Popup: **Run loop**, **Pause**, **Resume**, **Stop**, max-steps field; log stream of loop events.
 
-**Review checkpoint:** Short goals (for example: open a site, scroll once) complete without manual messages per step.
+**Review checkpoint:** Set a short goal and max steps (e.g. 5), click **Run loop**, watch events; use **Stop** or wait for `done` / `none` / limit.
+
+**Limits:** Stops on failed tool execution, plan error, snapshot error, max steps, or model `done` / `none`. `type` tool still not executed (returns error).
 
 ## Phase 3: Better perception
 

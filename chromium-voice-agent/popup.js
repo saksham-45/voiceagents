@@ -9,10 +9,55 @@
   var cmdForm = document.getElementById("cmd-form");
   var log = document.getElementById("log");
   var agentGoal = document.getElementById("agent-goal");
+  var agentMaxSteps = document.getElementById("agent-max-steps");
+  var agentRunLoop = document.getElementById("agent-run-loop");
   var agentPlanBtn = document.getElementById("agent-plan");
   var agentRunBtn = document.getElementById("agent-run");
+  var agentPause = document.getElementById("agent-pause");
+  var agentResume = document.getElementById("agent-resume");
+  var agentStopLoop = document.getElementById("agent-stop-loop");
   var agentOut = document.getElementById("agent-out");
   var lastAutonomousPlan = null;
+
+  function prependAgentLog(ev) {
+    if (!agentOut) return;
+    var line =
+      "[" +
+      new Date().toLocaleTimeString() +
+      "] " +
+      (ev.event || "?") +
+      " " +
+      JSON.stringify(ev).slice(0, 320);
+    agentOut.textContent = line + "\n" + agentOut.textContent;
+    if (agentOut.textContent.length > 9000) agentOut.textContent = agentOut.textContent.slice(0, 9000);
+  }
+
+  function setLoopUiRunning() {
+    if (agentRunLoop) agentRunLoop.disabled = true;
+    if (agentPlanBtn) agentPlanBtn.disabled = true;
+    if (agentRunBtn) agentRunBtn.disabled = true;
+    if (agentPause) agentPause.disabled = false;
+    if (agentResume) agentResume.disabled = true;
+    if (agentStopLoop) agentStopLoop.disabled = false;
+    if (agentGoal) agentGoal.disabled = true;
+    if (agentMaxSteps) agentMaxSteps.disabled = true;
+  }
+
+  function setLoopUiPaused() {
+    if (agentPause) agentPause.disabled = true;
+    if (agentResume) agentResume.disabled = false;
+    if (agentStopLoop) agentStopLoop.disabled = false;
+  }
+
+  function setLoopUiIdle() {
+    if (agentRunLoop) agentRunLoop.disabled = false;
+    if (agentPlanBtn) agentPlanBtn.disabled = false;
+    if (agentPause) agentPause.disabled = true;
+    if (agentResume) agentResume.disabled = true;
+    if (agentStopLoop) agentStopLoop.disabled = true;
+    if (agentGoal) agentGoal.disabled = false;
+    if (agentMaxSteps) agentMaxSteps.disabled = false;
+  }
 
   chrome.runtime.sendMessage({ type: "GET_LISTEN_MODE" }, function(resp) {
     if (resp) {
@@ -24,6 +69,15 @@
         badge.className = "llm-badge " + (resp.ollama ? "on" : "off");
       }
     }
+  });
+
+  chrome.runtime.sendMessage({ type: "AUTONOMOUS_STATUS" }, function(st) {
+    if (!st || chrome.runtime.lastError) return;
+    if (st.status === "running") setLoopUiRunning();
+    else if (st.status === "paused") {
+      setLoopUiRunning();
+      setLoopUiPaused();
+    } else setLoopUiIdle();
   });
 
   toggle.addEventListener("change", function() {
@@ -76,6 +130,23 @@
     else if (msg.type === "LISTEN_MODE_CHANGED") {
       toggle.checked = msg.listening;
       updateStatus(msg.listening);
+    }
+    else if (msg.type === "AUTONOMOUS_LOOP_EVENT") {
+      var ev = msg.payload || msg;
+      prependAgentLog(ev);
+      if (ev.event === "started") setLoopUiRunning();
+      else if (ev.event === "paused") setLoopUiPaused();
+      else if (ev.event === "resumed") setLoopUiRunning();
+      else if (
+        ev.event === "finished" ||
+        ev.event === "cancelled" ||
+        ev.event === "limit" ||
+        ev.event === "error"
+      ) {
+        setLoopUiIdle();
+        lastAutonomousPlan = null;
+        if (agentRunBtn) agentRunBtn.disabled = true;
+      }
     }
   });
 
@@ -144,6 +215,47 @@
     entry.appendChild(msg);
     log.insertBefore(entry, log.firstChild);
     while (log.children.length > 30) log.removeChild(log.lastChild);
+  }
+
+  if (agentRunLoop && agentGoal && agentOut) {
+    agentRunLoop.addEventListener("click", function() {
+      var goal = agentGoal.value.trim();
+      if (!goal) {
+        agentOut.textContent = "Enter a goal first.";
+        return;
+      }
+      var ms = agentMaxSteps ? parseInt(agentMaxSteps.value, 10) : 15;
+      prependAgentLog({ event: "user", action: "run_loop", goal: goal, maxSteps: ms });
+      chrome.runtime.sendMessage({ type: "AUTONOMOUS_RUN_LOOP", goal: goal, maxSteps: ms }, function(resp) {
+        if (chrome.runtime.lastError) {
+          agentOut.textContent = "Error: " + chrome.runtime.lastError.message;
+          return;
+        }
+        if (!resp || !resp.ok) {
+          agentOut.textContent = "Could not start: " + (resp && resp.error ? resp.error : JSON.stringify(resp));
+          return;
+        }
+        setLoopUiRunning();
+      });
+    });
+
+    if (agentStopLoop) {
+      agentStopLoop.addEventListener("click", function() {
+        chrome.runtime.sendMessage({ type: "AUTONOMOUS_CANCEL" }, function() {});
+      });
+    }
+    if (agentPause) {
+      agentPause.addEventListener("click", function() {
+        chrome.runtime.sendMessage({ type: "AUTONOMOUS_PAUSE" }, function() {});
+      });
+    }
+    if (agentResume) {
+      agentResume.addEventListener("click", function() {
+        chrome.runtime.sendMessage({ type: "AUTONOMOUS_RESUME" }, function(resp) {
+          if (resp && resp.ok) setLoopUiRunning();
+        });
+      });
+    }
   }
 
   if (agentPlanBtn && agentRunBtn && agentGoal && agentOut) {

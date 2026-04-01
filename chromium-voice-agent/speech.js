@@ -26,13 +26,17 @@
       sendResponse({ ok: true, listening: listening, shouldListen: shouldListen });
     } else if (msg.type === "LLM_THINKING") {
       showFeedback("ai-thinking", "AI thinking...");
+      sendResponse({ ok: true });
     } else if (msg.type === "COMMAND_EXECUTED") {
       var label = msg.parsed && msg.parsed._source === "ai" ? "AI" : "Bot";
       var detail = formatResult(msg.parsed);
       showFeedback(label === "AI" ? "ai" : "bot", label + " → " + detail);
+      sendResponse({ ok: true });
     } else if (msg.type === "COMMAND_IGNORED") {
       showFeedback("skip", "Skip: " + (msg.text || "?"));
+      sendResponse({ ok: true });
     }
+    return false;
   }
 
   chrome.runtime.onMessage.addListener(onMessage);

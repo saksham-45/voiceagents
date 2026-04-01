@@ -92,6 +92,8 @@ Ollama returns **404** when the **`model`** string in the request is not install
 
 The autonomous planner defaults to **`qwen2.5:3b`** so it matches the voice LLM in `background.js`. For better multi-step planning on a 16GB Mac, pull something like **`llama3.1:8b`** and set **`AUTONOMOUS_MODEL`** accordingly.
 
+**Autonomous loop (Phase 2):** From the extension popup, **Run loop** drives snapshot → Ollama plan → tool → verify → repeat until the model returns `done` / `none`, you **Stop**, or **max steps** is hit. Requires the same Ollama **403** fix as above. Messages: `AUTONOMOUS_RUN_LOOP`, `AUTONOMOUS_CANCEL`, `AUTONOMOUS_PAUSE`, `AUTONOMOUS_RESUME`, `AUTONOMOUS_STATUS` (see `background.js`).
+
 Key files:
 
 - `chromium-voice-agent/manifest.json`

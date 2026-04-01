@@ -1618,19 +1618,19 @@ function injectIntoTab(tabId, func, args, callback) {
   });
 }
 
-function runAutonomousTool(tabId, tool, args, sendResponse) {
+function runAutonomousToolCb(tabId, tool, args, callback) {
   var t = (tool || "").toLowerCase();
   var a = args || {};
 
   if (t === "done" || t === "none") {
-    sendResponse({ ok: true, finished: true });
+    callback({ ok: true, finished: true });
     return;
   }
 
   if (t === "wait") {
     var ms = Math.min(5000, Math.max(0, parseInt(a.ms, 10) || 500));
     setTimeout(function() {
-      sendResponse({ ok: true });
+      callback({ ok: true });
     }, ms);
     return;
   }
@@ -1638,12 +1638,12 @@ function runAutonomousTool(tabId, tool, args, sendResponse) {
   if (t === "navigate" && a.url) {
     var u = String(a.url);
     if (!/^https:\/\//i.test(u) && !/^http:\/\/localhost/i.test(u) && !/^http:\/\/127\.0\.0\.1/i.test(u)) {
-      sendResponse({ ok: false, error: "only https or local http allowed" });
+      callback({ ok: false, error: "only https or local http allowed" });
       return;
     }
     chrome.tabs.update(tabId, { url: u }, function() {
-      if (chrome.runtime.lastError) sendResponse({ ok: false, error: chrome.runtime.lastError.message });
-      else sendResponse({ ok: true });
+      if (chrome.runtime.lastError) callback({ ok: false, error: chrome.runtime.lastError.message });
+      else callback({ ok: true });
     });
     return;
   }
@@ -1660,7 +1660,7 @@ function runAutonomousTool(tabId, tool, args, sendResponse) {
       },
       [dir, amt],
       function(err) {
-        sendResponse({ ok: !err, error: err && err.message });
+        callback({ ok: !err, error: err && err.message });
       }
     );
     return;
@@ -1670,21 +1670,261 @@ function runAutonomousTool(tabId, tool, args, sendResponse) {
     var m = typeof a.target_id === "string" && a.target_id.match(/^e_(\d+)$/i);
     var idx = m ? parseInt(m[1], 10) : -1;
     if (idx < 0) {
-      sendResponse({ ok: false, error: "bad target_id" });
+      callback({ ok: false, error: "bad target_id" });
       return;
     }
     AutonomousAgent.clickElementByIndex(tabId, idx, function(err) {
-      sendResponse({ ok: !err, error: err && err.message });
+      callback({ ok: !err, error: err && err.message });
     });
     return;
   }
 
   if (t === "type") {
-    sendResponse({ ok: false, error: "type tool not implemented yet" });
+    var tm = typeof a.target_id === "string" && a.target_id.match(/^e_(\d+)$/i);
+    var tidx = tm ? parseInt(tm[1], 10) : -1;
+    var ttext = a.text != null ? String(a.text) : "";
+    if (tidx < 0) {
+      callback({ ok: false, error: "bad target_id" });
+      return;
+    }
+    if (!ttext.length) {
+      callback({ ok: false, error: "missing text" });
+      return;
+    }
+    AutonomousAgent.typeElementByIndex(tabId, tidx, ttext, function(err) {
+      callback({ ok: !err, error: err && err.message });
+    });
     return;
   }
 
-  sendResponse({ ok: false, error: "unknown tool: " + t });
+  callback({ ok: false, error: "unknown tool: " + t });
+}
+
+function runAutonomousTool(tabId, tool, args, sendResponse) {
+  runAutonomousToolCb(tabId, tool, args, function(res) {
+    sendResponse(res);
+  });
+}
+
+// ── Autonomous multi-step runner (Phase 2) ──
+var autonomousRunner = {
+  status: "idle",
+  goal: "",
+  tabId: null,
+  stepIndex: 0,
+  maxSteps: 25,
+  history: [],
+  cancelRequested: false,
+  pauseRequested: false,
+  lastError: null
+};
+
+var AUTONOMOUS_DEFAULT_MAX_STEPS = 25;
+
+function autonomousBroadcastLoop(ev) {
+  safeBroadcast({ type: "AUTONOMOUS_LOOP_EVENT", event: ev.event, payload: ev });
+}
+
+function autonomousResetRunner() {
+  autonomousRunner.status = "idle";
+  autonomousRunner.goal = "";
+  autonomousRunner.tabId = null;
+  autonomousRunner.stepIndex = 0;
+  autonomousRunner.history = [];
+  autonomousRunner.cancelRequested = false;
+  autonomousRunner.pauseRequested = false;
+  autonomousRunner.lastError = null;
+}
+
+function autonomousSnapshotSummary(snap) {
+  if (!snap) return {};
+  return {
+    url: snap.url,
+    title: snap.title,
+    elementCount: snap.elements ? snap.elements.length : 0
+  };
+}
+
+function autonomousSettleMsForTool(tool) {
+  var t = (tool || "").toLowerCase();
+  if (t === "navigate") return 1400;
+  if (t === "click") return 600;
+  if (t === "wait") return 0;
+  return 400;
+}
+
+function autonomousRunLoopTick() {
+  if (autonomousRunner.status !== "running") return;
+  if (autonomousRunner.cancelRequested) {
+    autonomousRunner.cancelRequested = false;
+    autonomousBroadcastLoop({
+      event: "cancelled",
+      step: autonomousRunner.stepIndex,
+      message: "Run cancelled"
+    });
+    autonomousResetRunner();
+    return;
+  }
+  if (autonomousRunner.pauseRequested) {
+    autonomousRunner.status = "paused";
+    autonomousBroadcastLoop({
+      event: "paused",
+      step: autonomousRunner.stepIndex,
+      message: "Paused after last step"
+    });
+    autonomousRunner.pauseRequested = false;
+    return;
+  }
+  if (autonomousRunner.stepIndex >= autonomousRunner.maxSteps) {
+    autonomousRunner.status = "idle";
+    autonomousBroadcastLoop({
+      event: "limit",
+      step: autonomousRunner.stepIndex,
+      message: "Stopped: max steps (" + autonomousRunner.maxSteps + ")"
+    });
+    autonomousResetRunner();
+    return;
+  }
+
+  var tabId = autonomousRunner.tabId;
+  AutonomousAgent.collectSnapshot(tabId, function(err, snapBefore) {
+    if (err) {
+      autonomousRunner.status = "idle";
+      autonomousRunner.lastError = err.message;
+      autonomousBroadcastLoop({ event: "error", error: err.message, phase: "snapshot" });
+      autonomousResetRunner();
+      return;
+    }
+
+    AutonomousAgent.planStep(autonomousRunner.goal, autonomousRunner.history, snapBefore, function(err2, plan) {
+      if (err2) {
+        autonomousRunner.status = "idle";
+        autonomousRunner.lastError = err2.message || String(err2);
+        autonomousBroadcastLoop({
+          event: "error",
+          error: autonomousRunner.lastError,
+          phase: "plan",
+          snapshot: autonomousSnapshotSummary(snapBefore)
+        });
+        autonomousResetRunner();
+        return;
+      }
+
+      var tool = (plan.tool || "").toLowerCase();
+      autonomousBroadcastLoop({
+        event: "planned",
+        step: autonomousRunner.stepIndex + 1,
+        maxSteps: autonomousRunner.maxSteps,
+        tool: plan.tool,
+        args: plan.args,
+        reason: plan.reason,
+        snapshot: autonomousSnapshotSummary(snapBefore)
+      });
+
+      if (tool === "done" || tool === "none") {
+        autonomousBroadcastLoop({
+          event: "finished",
+          outcome: tool,
+          reason: plan.reason,
+          planningRounds: autonomousRunner.stepIndex + 1
+        });
+        autonomousResetRunner();
+        return;
+      }
+
+      var urlBefore = snapBefore.url;
+      var countBefore = (snapBefore.elements && snapBefore.elements.length) || 0;
+
+      runAutonomousToolCb(tabId, plan.tool, plan.args, function(execRes) {
+        var settle = autonomousSettleMsForTool(plan.tool);
+        setTimeout(function() {
+          AutonomousAgent.collectSnapshot(tabId, function(err3, snapAfter) {
+            var verify = {};
+            if (err3) verify.snapshotAfterError = err3.message;
+            else {
+              verify.urlChanged = snapAfter.url !== urlBefore;
+              verify.elementCountBefore = countBefore;
+              verify.elementCountAfter = snapAfter.elements ? snapAfter.elements.length : 0;
+              verify.elementCountDelta = verify.elementCountAfter - countBefore;
+              verify.titleAfter = snapAfter.title;
+            }
+
+            autonomousRunner.history.push({
+              step: autonomousRunner.stepIndex + 1,
+              tool: plan.tool,
+              args: plan.args,
+              reason: plan.reason,
+              execOk: execRes.ok,
+              execError: execRes.error || null,
+              verify: verify
+            });
+            autonomousRunner.stepIndex++;
+
+            autonomousBroadcastLoop({
+              event: "step_done",
+              step: autonomousRunner.stepIndex,
+              maxSteps: autonomousRunner.maxSteps,
+              exec: execRes,
+              verify: verify
+            });
+
+            if (autonomousRunner.cancelRequested) {
+              autonomousRunner.cancelRequested = false;
+              autonomousBroadcastLoop({ event: "cancelled", step: autonomousRunner.stepIndex });
+              autonomousResetRunner();
+              return;
+            }
+            if (autonomousRunner.pauseRequested) {
+              autonomousRunner.status = "paused";
+              autonomousBroadcastLoop({ event: "paused", step: autonomousRunner.stepIndex });
+              autonomousRunner.pauseRequested = false;
+              return;
+            }
+            if (!execRes.ok) {
+              autonomousRunner.status = "idle";
+              autonomousBroadcastLoop({
+                event: "error",
+                phase: "execute",
+                error: execRes.error || "tool failed",
+                step: autonomousRunner.stepIndex
+              });
+              autonomousResetRunner();
+              return;
+            }
+
+            autonomousRunLoopTick();
+          });
+        }, settle);
+      });
+    });
+  });
+}
+
+function autonomousStartLoop(goal, maxSteps, tabId) {
+  if (autonomousRunner.status === "running") return { ok: false, error: "already running" };
+  autonomousResetRunner();
+  var ms = parseInt(maxSteps, 10);
+  if (!ms || ms < 1) ms = AUTONOMOUS_DEFAULT_MAX_STEPS;
+  if (ms > 100) ms = 100;
+
+  autonomousRunner.status = "running";
+  autonomousRunner.goal = String(goal || "").slice(0, 4000);
+  autonomousRunner.tabId = tabId;
+  autonomousRunner.stepIndex = 0;
+  autonomousRunner.maxSteps = ms;
+  autonomousRunner.history = [];
+  autonomousRunner.cancelRequested = false;
+  autonomousRunner.pauseRequested = false;
+  autonomousRunner.lastError = null;
+
+  autonomousBroadcastLoop({
+    event: "started",
+    goal: autonomousRunner.goal,
+    maxSteps: autonomousRunner.maxSteps,
+    tabId: tabId
+  });
+  autonomousRunLoopTick();
+  return { ok: true };
 }
 
 function speak(text) {
@@ -1795,13 +2035,16 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
         safeBroadcast({ type: "COMMAND_EXECUTED", transcript: msg.transcript, parsed: parsed });
       }
     });
+    sendResponse({ ok: true });
   }
   else if (msg.type === "USER_STOPPED_SPEECH") {
     setListenMode(false);
     safeBroadcast({ type: "LISTEN_MODE_CHANGED", listening: false });
+    sendResponse({ ok: true });
   }
   else if (msg.type === "SPEECH_INTERIM" || msg.type === "SPEECH_STATUS" || msg.type === "SPEECH_ERROR") {
     safeBroadcast(msg);
+    sendResponse({ ok: true });
   }
   else if (msg.type === "AUTONOMOUS_PLAN_STEP") {
     function runPlan(tabId) {
@@ -1856,6 +2099,52 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
       });
     }
     return true;
+  }
+  else if (msg.type === "AUTONOMOUS_RUN_LOOP") {
+    chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+      var tid = msg.tabId || (tabs[0] && tabs[0].id);
+      if (!tid) {
+        sendResponse({ ok: false, error: "no active tab" });
+        return;
+      }
+      var start = autonomousStartLoop(msg.goal || "", msg.maxSteps, tid);
+      if (!start.ok) sendResponse(start);
+      else sendResponse({ ok: true, maxSteps: autonomousRunner.maxSteps, model: AutonomousAgent.AUTONOMOUS_MODEL });
+    });
+    return true;
+  }
+  else if (msg.type === "AUTONOMOUS_CANCEL") {
+    if (autonomousRunner.status === "running") autonomousRunner.cancelRequested = true;
+    else if (autonomousRunner.status === "paused") {
+      autonomousResetRunner();
+      autonomousBroadcastLoop({ event: "cancelled", message: "Cancelled while paused" });
+    }
+    sendResponse({ ok: true });
+  }
+  else if (msg.type === "AUTONOMOUS_PAUSE") {
+    if (autonomousRunner.status === "running") autonomousRunner.pauseRequested = true;
+    sendResponse({ ok: true });
+  }
+  else if (msg.type === "AUTONOMOUS_RESUME") {
+    if (autonomousRunner.status !== "paused") {
+      sendResponse({ ok: false, error: "not paused" });
+    } else {
+      autonomousRunner.status = "running";
+      autonomousBroadcastLoop({ event: "resumed", step: autonomousRunner.stepIndex });
+      autonomousRunLoopTick();
+      sendResponse({ ok: true });
+    }
+  }
+  else if (msg.type === "AUTONOMOUS_STATUS") {
+    sendResponse({
+      status: autonomousRunner.status,
+      step: autonomousRunner.stepIndex,
+      maxSteps: autonomousRunner.maxSteps,
+      goal: autonomousRunner.goal,
+      tabId: autonomousRunner.tabId,
+      historyLength: autonomousRunner.history.length,
+      lastError: autonomousRunner.lastError
+    });
   }
   else if (msg.type === "AUTONOMOUS_GET_MODEL") {
     sendResponse({ model: AutonomousAgent.AUTONOMOUS_MODEL });

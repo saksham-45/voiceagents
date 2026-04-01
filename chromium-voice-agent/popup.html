@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=380">
+  <meta name="viewport" content="width=400">
   <title>Voice Agent</title>
   <link rel="stylesheet" href="popup.css">
 </head>
@@ -44,10 +44,17 @@
     <div class="agent-beta" id="agent-beta">
       <p class="agent-beta-title">Autonomous agent (beta)</p>
       <p class="agent-beta-hint">Ollama: <code>OLLAMA_ORIGINS=chrome-extension://*</code> if you see 403. Model must exist: <code>ollama list</code> and match <code>AUTONOMOUS_MODEL</code> in <code>autonomous_agent.js</code> (404 = pull model or fix name).</p>
-      <input id="agent-goal" type="text" placeholder='Goal, e.g. "scroll down once" or open a site' autocomplete="off" spellcheck="false">
+      <input id="agent-goal" type="text" placeholder='Goal, e.g. "scroll down twice" or open a site' autocomplete="off" spellcheck="false">
+      <label class="agent-max-label">Max steps <input type="number" id="agent-max-steps" value="15" min="1" max="100" title="Safety cap per run"></label>
       <div class="agent-beta-actions">
+        <button type="button" id="agent-run-loop" class="agent-btn primary">Run loop</button>
         <button type="button" id="agent-plan" class="agent-btn">Plan 1 step</button>
-        <button type="button" id="agent-run" class="agent-btn primary" disabled>Run that step</button>
+        <button type="button" id="agent-run" class="agent-btn" disabled>Run step</button>
+      </div>
+      <div class="agent-beta-actions agent-row2">
+        <button type="button" id="agent-pause" class="agent-btn" disabled>Pause</button>
+        <button type="button" id="agent-resume" class="agent-btn" disabled>Resume</button>
+        <button type="button" id="agent-stop-loop" class="agent-btn" disabled>Stop</button>
       </div>
       <pre id="agent-out" class="agent-out" aria-live="polite"></pre>
     </div>
