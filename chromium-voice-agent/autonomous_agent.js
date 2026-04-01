@@ -5,8 +5,9 @@
 
 var OLLAMA_GENERATE_URL = "http://127.0.0.1:11434/api/generate";
 
-// Set to a model you actually have: run `ollama list` (8B class recommended on 16GB RAM)
-var AUTONOMOUS_MODEL = "llama3.1:8b";
+// Must match an exact name from `ollama list` (404 = wrong tag or not pulled).
+// Default matches voice LLM in background.js; for stronger planning try e.g. llama3.1:8b after `ollama pull llama3.1:8b`.
+var AUTONOMOUS_MODEL = "qwen2.5:3b";
 
 var AUTONOMOUS_SYSTEM_PROMPT = [
   "You are the planner for a Chromium browser extension. You choose ONE tool call per turn.",
@@ -182,6 +183,16 @@ function planStep(goal, history, snapshot, callback) {
           "ollama HTTP 403: Ollama blocks the extension Origin. Quit the Ollama menu-bar app, then in Terminal run: " +
             "OLLAMA_ORIGINS=chrome-extension://* ollama serve " +
             "(or list your exact id from chrome://extensions). See README \"Ollama 403\"."
+        );
+      }
+      if (r.status === 404) {
+        throw new Error(
+          "ollama HTTP 404: model \"" +
+            AUTONOMOUS_MODEL +
+            "\" not found. Run `ollama list` and set AUTONOMOUS_MODEL in autonomous_agent.js to an exact tag, " +
+            "or run `ollama pull " +
+            AUTONOMOUS_MODEL +
+            "` (example for a larger planner: `ollama pull llama3.1:8b` then set AUTONOMOUS_MODEL to that tag)."
         );
       }
       if (!r.ok) throw new Error("ollama HTTP " + r.status);

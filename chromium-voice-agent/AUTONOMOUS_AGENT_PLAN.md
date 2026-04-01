@@ -108,6 +108,13 @@ Local-first, Chromium-only, planner runs on **Ollama** on your machine. This doc
 | `AUTONOMOUS_AGENT_PLAN.md` | This roadmap. |
 | `popup.html` / `popup.js` | Later: autonomous controls; Phase 1 can be driven via messages only. |
 
+## Troubleshooting: `ollama HTTP 404`
+
+Ollama returns **404** when the requested **model name** is missing. The string must match **`ollama list`** exactly.
+
+- **Fix:** `ollama pull <tag>` or change **`AUTONOMOUS_MODEL`** in `autonomous_agent.js` to a tag you already have.
+- Default planner model is **`qwen2.5:3b`** (same family as voice fallback in `background.js`). Upgrade the constant after `ollama pull llama3.1:8b` (or similar).
+
 ## Troubleshooting: `ollama HTTP 403`
 
 The extension is not broken. Ollama rejects browser/extension origins unless you allow them.

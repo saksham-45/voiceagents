@@ -82,6 +82,16 @@ OLLAMA_ORIGINS=chrome-extension://abcdefghijklmnopqrstuvwxyz123456 ollama serve
 
 Leave that Terminal window open, or set the same variable in a LaunchAgent / shell profile so it persists.
 
+#### Ollama HTTP 404 on Plan step
+
+Ollama returns **404** when the **`model`** string in the request is not installed. Tags must match **`ollama list`** exactly (for example `qwen2.5:3b`, `llama3.1:8b`, `llama3.2:latest`).
+
+1. Run `ollama list` and pick a name.
+2. Set **`AUTONOMOUS_MODEL`** in `chromium-voice-agent/autonomous_agent.js` to that exact string, **or** run `ollama pull <name>` for the model you want.
+3. Reload the extension.
+
+The autonomous planner defaults to **`qwen2.5:3b`** so it matches the voice LLM in `background.js`. For better multi-step planning on a 16GB Mac, pull something like **`llama3.1:8b`** and set **`AUTONOMOUS_MODEL`** accordingly.
+
 Key files:
 
 - `chromium-voice-agent/manifest.json`

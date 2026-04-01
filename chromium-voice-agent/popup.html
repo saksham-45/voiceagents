@@ -43,7 +43,7 @@
 
     <div class="agent-beta" id="agent-beta">
       <p class="agent-beta-title">Autonomous agent (beta)</p>
-      <p class="agent-beta-hint">Needs Ollama with <code>OLLAMA_ORIGINS=chrome-extension://*</code> (otherwise HTTP 403). Model: <code>AUTONOMOUS_MODEL</code> in <code>autonomous_agent.js</code>.</p>
+      <p class="agent-beta-hint">Ollama: <code>OLLAMA_ORIGINS=chrome-extension://*</code> if you see 403. Model must exist: <code>ollama list</code> and match <code>AUTONOMOUS_MODEL</code> in <code>autonomous_agent.js</code> (404 = pull model or fix name).</p>
       <input id="agent-goal" type="text" placeholder='Goal, e.g. "scroll down once" or open a site' autocomplete="off" spellcheck="false">
       <div class="agent-beta-actions">
         <button type="button" id="agent-plan" class="agent-btn">Plan 1 step</button>

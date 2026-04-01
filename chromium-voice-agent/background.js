@@ -178,6 +178,11 @@ function callLLM(text) {
         "Ollama HTTP 403: set OLLAMA_ORIGINS=chrome-extension://* then restart Ollama (README: Ollama 403)."
       );
     }
+    if (r.status === 404) {
+      throw new Error(
+        "Ollama HTTP 404: model not in ollama list. Change model in callLLM() in background.js or run ollama pull qwen2.5:3b (README: Ollama 404)."
+      );
+    }
     if (!r.ok) throw new Error("Ollama HTTP " + r.status);
     return r.json();
   })
