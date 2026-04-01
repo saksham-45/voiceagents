@@ -88,6 +88,14 @@
   var plannerBackendBar = document.getElementById("planner-backend-bar");
   var plannerBackendText = document.getElementById("planner-backend-text");
 
+  function normOpenAIKeyStored(raw) {
+    if (raw == null) return "";
+    return String(raw)
+      .replace(/\uFEFF/g, "")
+      .replace(/\s+/g, "")
+      .trim();
+  }
+
   function refreshPlannerBackendLabel() {
     if (!plannerBackendText || !plannerBackendBar) return;
     plannerBackendText.textContent = "Checking planner…";
@@ -111,7 +119,7 @@
       if (openaiModelInput) openaiModelInput.value = (r.va_openai_model || "gpt-4o-mini").trim();
       if (openaiKeyInput) openaiKeyInput.value = "";
       if (openaiStatus) {
-        if (r.va_openai_api_key && String(r.va_openai_api_key).trim()) {
+        if (normOpenAIKeyStored(r.va_openai_api_key)) {
           openaiStatus.textContent =
             "Saved API key on file — paste a new key to replace, or Save to update the model only.";
         } else {
@@ -123,26 +131,40 @@
 
   if (openaiSaveBtn && openaiModelInput) {
     openaiSaveBtn.addEventListener("click", function() {
-      chrome.storage.local.get(["va_openai_api_key"], function(prev) {
-        var keyInput = openaiKeyInput ? openaiKeyInput.value.trim() : "";
-        var model = openaiModelInput.value.trim() || "gpt-4o-mini";
-        var existing = (prev.va_openai_api_key || "").trim();
-        var keyToStore = keyInput.length ? keyInput : existing;
-        if (!keyToStore.length) {
-          if (openaiStatus) openaiStatus.textContent = "Enter an API key first (or keep using Ollama without saving).";
-          return;
-        }
-        chrome.storage.local.set({ va_openai_api_key: keyToStore, va_openai_model: model }, function() {
+      var keyRaw = openaiKeyInput ? openaiKeyInput.value : "";
+      var model = openaiModelInput.value.trim() || "gpt-4o-mini";
+      chrome.runtime.sendMessage(
+        { type: "VA_SAVE_OPENAI_SETTINGS", apiKey: keyRaw, model: model },
+        function(resp) {
+          if (chrome.runtime.lastError) {
+            if (openaiStatus) openaiStatus.textContent = "Save failed: " + chrome.runtime.lastError.message;
+            return;
+          }
+          if (!resp || !resp.ok) {
+            if (openaiStatus) openaiStatus.textContent = (resp && resp.error) || "Save failed.";
+            return;
+          }
           if (openaiKeyInput) openaiKeyInput.value = "";
-          if (openaiStatus) openaiStatus.textContent = "Saved. Autonomous planner uses OpenAI (" + model + ").";
+          if (openaiStatus) {
+            openaiStatus.textContent =
+              "Saved. Autonomous planner uses OpenAI (" + (resp.model || model) + "). Check the green bar below.";
+          }
           refreshPlannerBackendLabel();
-        });
-      });
+        }
+      );
     });
   }
   if (openaiClearBtn) {
     openaiClearBtn.addEventListener("click", function() {
-      chrome.storage.local.remove(["va_openai_api_key"], function() {
+      chrome.runtime.sendMessage({ type: "VA_CLEAR_OPENAI_KEY" }, function(resp) {
+        if (chrome.runtime.lastError) {
+          if (openaiStatus) openaiStatus.textContent = "Clear failed: " + chrome.runtime.lastError.message;
+          return;
+        }
+        if (!resp || !resp.ok) {
+          if (openaiStatus) openaiStatus.textContent = (resp && resp.error) || "Clear failed.";
+          return;
+        }
         if (openaiKeyInput) openaiKeyInput.value = "";
         if (openaiStatus) openaiStatus.textContent = "OpenAI key removed. Planner uses local Ollama.";
         refreshPlannerBackendLabel();

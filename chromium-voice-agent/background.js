@@ -1618,7 +1618,60 @@ function injectIntoTab(tabId, func, args, callback) {
   });
 }
 
-function runAutonomousToolCb(tabId, tool, args, callback) {
+function autonomousUrlHostname(u) {
+  try {
+    return new URL(u).hostname.replace(/^www\./i, "").toLowerCase();
+  } catch (e) {
+    return "";
+  }
+}
+
+/** Block cross-site navigate unless USER_GOAL names the destination (stops random jumps). */
+function autonomousGoalAllowsNavigateTo(goal, fromPageUrl, toUrl) {
+  var fromH = autonomousUrlHostname(fromPageUrl);
+  var toH = autonomousUrlHostname(toUrl);
+  if (!toH) return true;
+  if (!fromH || fromH === toH) return true;
+  var g = String(goal || "").toLowerCase();
+  if (g.indexOf(toH) !== -1) return true;
+  var parts = toH.split(".");
+  for (var i = 0; i < parts.length - 1; i++) {
+    var lab = parts[i];
+    if (lab.length >= 4 && g.indexOf(lab) !== -1) return true;
+  }
+  var urls = g.match(/https?:\/\/[^\s)'"<>\]]+/g);
+  if (urls) {
+    for (var j = 0; j < urls.length; j++) {
+      if (autonomousUrlHostname(urls[j]) === toH) return true;
+    }
+  }
+  return false;
+}
+
+function autonomousScrollQuotaFromGoal(goal) {
+  var g = String(goal || "").toLowerCase();
+  if (!/\bscroll/.test(g)) return 0;
+  if (/\b(once|one time|1 time|a single scroll|single scroll)\b/.test(g)) return 1;
+  if (/\b(twice|two times|2 times|double)\b/.test(g)) return 2;
+  if (/\b(three times|3 times|thrice)\b/.test(g)) return 3;
+  if (/\b(four times|4 times)\b/.test(g)) return 4;
+  if (/\b(five times|5 times)\b/.test(g)) return 5;
+  var n = g.match(/\b(\d{1,2})\s+times\b/);
+  if (n) return Math.min(20, parseInt(n[1], 10));
+  return 0;
+}
+
+function autonomousSuccessfulScrollCount(history) {
+  var c = 0;
+  var h = history || [];
+  for (var i = 0; i < h.length; i++) {
+    if (h[i].tool && String(h[i].tool).toLowerCase() === "scroll" && h[i].execOk) c++;
+  }
+  return c;
+}
+
+function runAutonomousToolCb(tabId, tool, args, callback, ctx) {
+  ctx = ctx || {};
   var t = (tool || "").toLowerCase();
   var a = args || {};
 
@@ -1639,6 +1692,14 @@ function runAutonomousToolCb(tabId, tool, args, callback) {
     var u = String(a.url);
     if (!/^https:\/\//i.test(u) && !/^http:\/\/localhost/i.test(u) && !/^http:\/\/127\.0\.0\.1/i.test(u)) {
       callback({ ok: false, error: "only https or local http allowed" });
+      return;
+    }
+    if (ctx.pageUrl && ctx.goal != null && !autonomousGoalAllowsNavigateTo(ctx.goal, ctx.pageUrl, u)) {
+      callback({
+        ok: false,
+        error:
+          "navigate blocked: your goal does not name this site. Stay on the page or rewrite the goal (e.g. include the site name or full URL)."
+      });
       return;
     }
     chrome.tabs.update(tabId, { url: u }, function() {
@@ -1700,10 +1761,16 @@ function runAutonomousToolCb(tabId, tool, args, callback) {
   callback({ ok: false, error: "unknown tool: " + t });
 }
 
-function runAutonomousTool(tabId, tool, args, sendResponse) {
-  runAutonomousToolCb(tabId, tool, args, function(res) {
-    sendResponse(res);
-  });
+function runAutonomousTool(tabId, tool, args, sendResponse, ctx) {
+  runAutonomousToolCb(
+    tabId,
+    tool,
+    args,
+    function(res) {
+      sendResponse(res);
+    },
+    ctx || {}
+  );
 }
 
 // ── Autonomous multi-step runner (Phase 2) ──
@@ -1753,12 +1820,26 @@ function autonomousSettleMsForTool(tool) {
   return 400;
 }
 
+/** OpenAI keys are one line; pastes often include spaces/newlines/BOM that break the API. */
+function normalizeStoredOpenAIKey(raw) {
+  if (raw == null) return "";
+  return String(raw)
+    .replace(/\uFEFF/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
+function hasOpenAIKeyInStorage(r) {
+  return normalizeStoredOpenAIKey(r && r.va_openai_api_key).length > 0;
+}
+
 /** Loads optional OpenAI key from storage; otherwise planner uses local Ollama. */
 function autonomousPlanStep(goal, history, snapshot, callback) {
   chrome.storage.local.get(["va_openai_api_key", "va_openai_model"], function(r) {
-    var key = (r.va_openai_api_key || "").trim();
+    var key = normalizeStoredOpenAIKey(r.va_openai_api_key);
     var model = (r.va_openai_model || "gpt-4o-mini").trim();
     var opts = key ? { openaiApiKey: key, openaiModel: model } : null;
+    if (opts) console.log("[Voice Agent] autonomous planner: OpenAI", model);
     AutonomousAgent.planStep(goal, history, snapshot, callback, opts);
   });
 }
@@ -1791,6 +1872,18 @@ function autonomousRunLoopTick() {
       event: "limit",
       step: autonomousRunner.stepIndex,
       message: "Stopped: max steps (" + autonomousRunner.maxSteps + ")"
+    });
+    autonomousResetRunner();
+    return;
+  }
+
+  var scrollQuota = autonomousScrollQuotaFromGoal(autonomousRunner.goal);
+  if (scrollQuota > 0 && autonomousSuccessfulScrollCount(autonomousRunner.history) >= scrollQuota) {
+    autonomousBroadcastLoop({
+      event: "finished",
+      outcome: "done",
+      reason: "Completed " + scrollQuota + " scroll(s) as in your goal.",
+      planningRounds: autonomousRunner.stepIndex + 1
     });
     autonomousResetRunner();
     return;
@@ -1845,67 +1938,73 @@ function autonomousRunLoopTick() {
       var urlBefore = snapBefore.url;
       var countBefore = (snapBefore.elements && snapBefore.elements.length) || 0;
 
-      runAutonomousToolCb(tabId, plan.tool, plan.args, function(execRes) {
-        var settle = autonomousSettleMsForTool(plan.tool);
-        setTimeout(function() {
-          AutonomousAgent.collectSnapshot(tabId, function(err3, snapAfter) {
-            var verify = {};
-            if (err3) verify.snapshotAfterError = err3.message;
-            else {
-              verify.urlChanged = snapAfter.url !== urlBefore;
-              verify.elementCountBefore = countBefore;
-              verify.elementCountAfter = snapAfter.elements ? snapAfter.elements.length : 0;
-              verify.elementCountDelta = verify.elementCountAfter - countBefore;
-              verify.titleAfter = snapAfter.title;
-            }
+      runAutonomousToolCb(
+        tabId,
+        plan.tool,
+        plan.args,
+        function(execRes) {
+          var settle = autonomousSettleMsForTool(plan.tool);
+          setTimeout(function() {
+            AutonomousAgent.collectSnapshot(tabId, function(err3, snapAfter) {
+              var verify = {};
+              if (err3) verify.snapshotAfterError = err3.message;
+              else {
+                verify.urlChanged = snapAfter.url !== urlBefore;
+                verify.elementCountBefore = countBefore;
+                verify.elementCountAfter = snapAfter.elements ? snapAfter.elements.length : 0;
+                verify.elementCountDelta = verify.elementCountAfter - countBefore;
+                verify.titleAfter = snapAfter.title;
+              }
 
-            autonomousRunner.history.push({
-              step: autonomousRunner.stepIndex + 1,
-              tool: plan.tool,
-              args: plan.args,
-              reason: plan.reason,
-              execOk: execRes.ok,
-              execError: execRes.error || null,
-              verify: verify
-            });
-            autonomousRunner.stepIndex++;
-
-            autonomousBroadcastLoop({
-              event: "step_done",
-              step: autonomousRunner.stepIndex,
-              maxSteps: autonomousRunner.maxSteps,
-              exec: execRes,
-              verify: verify
-            });
-
-            if (autonomousRunner.cancelRequested) {
-              autonomousRunner.cancelRequested = false;
-              autonomousBroadcastLoop({ event: "cancelled", step: autonomousRunner.stepIndex });
-              autonomousResetRunner();
-              return;
-            }
-            if (autonomousRunner.pauseRequested) {
-              autonomousRunner.status = "paused";
-              autonomousBroadcastLoop({ event: "paused", step: autonomousRunner.stepIndex });
-              autonomousRunner.pauseRequested = false;
-              return;
-            }
-            if (!execRes.ok) {
-              autonomousRunner.status = "idle";
-              autonomousBroadcastLoop({
-                event: "error",
-                phase: "execute",
-                error: execRes.error || "tool failed",
-                step: autonomousRunner.stepIndex
+              autonomousRunner.history.push({
+                step: autonomousRunner.stepIndex + 1,
+                tool: plan.tool,
+                args: plan.args,
+                reason: plan.reason,
+                execOk: execRes.ok,
+                execError: execRes.error || null,
+                verify: verify
               });
-              autonomousResetRunner();
-              return;
-            }
+              autonomousRunner.stepIndex++;
 
-            autonomousRunLoopTick();
-          });
-        }, settle);
-      });
+              autonomousBroadcastLoop({
+                event: "step_done",
+                step: autonomousRunner.stepIndex,
+                maxSteps: autonomousRunner.maxSteps,
+                exec: execRes,
+                verify: verify
+              });
+
+              if (autonomousRunner.cancelRequested) {
+                autonomousRunner.cancelRequested = false;
+                autonomousBroadcastLoop({ event: "cancelled", step: autonomousRunner.stepIndex });
+                autonomousResetRunner();
+                return;
+              }
+              if (autonomousRunner.pauseRequested) {
+                autonomousRunner.status = "paused";
+                autonomousBroadcastLoop({ event: "paused", step: autonomousRunner.stepIndex });
+                autonomousRunner.pauseRequested = false;
+                return;
+              }
+              if (!execRes.ok) {
+                autonomousRunner.status = "idle";
+                autonomousBroadcastLoop({
+                  event: "error",
+                  phase: "execute",
+                  error: execRes.error || "tool failed",
+                  step: autonomousRunner.stepIndex
+                });
+                autonomousResetRunner();
+                return;
+              }
+
+              autonomousRunLoopTick();
+            });
+          }, settle);
+        },
+        { goal: autonomousRunner.goal, pageUrl: snapBefore.url }
+      );
     });
   });
 }
@@ -2059,7 +2158,7 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   else if (msg.type === "AUTONOMOUS_PLAN_STEP") {
     function runPlan(tabId) {
       chrome.storage.local.get(["va_openai_api_key", "va_openai_model"], function(st) {
-        var hasOpenAI = !!(st.va_openai_api_key && String(st.va_openai_api_key).trim());
+        var hasOpenAI = hasOpenAIKeyInStorage(st);
         var plannerModel = hasOpenAI ? (st.va_openai_model || "gpt-4o-mini").trim() : AutonomousAgent.AUTONOMOUS_MODEL;
         var plannerBackend = hasOpenAI ? "openai" : "ollama";
         AutonomousAgent.collectSnapshot(tabId, function(err, snap) {
@@ -2128,7 +2227,7 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
       if (!start.ok) sendResponse(start);
       else {
         chrome.storage.local.get(["va_openai_api_key", "va_openai_model"], function(r) {
-          var hasOpenAI = !!(r.va_openai_api_key && String(r.va_openai_api_key).trim());
+          var hasOpenAI = hasOpenAIKeyInStorage(r);
           sendResponse({
             ok: true,
             maxSteps: autonomousRunner.maxSteps,
@@ -2175,11 +2274,43 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   }
   else if (msg.type === "AUTONOMOUS_GET_MODEL") {
     chrome.storage.local.get(["va_openai_api_key", "va_openai_model"], function(r) {
-      var hasOpenAI = !!(r.va_openai_api_key && String(r.va_openai_api_key).trim());
+      var hasOpenAI = hasOpenAIKeyInStorage(r);
       sendResponse({
         model: hasOpenAI ? (r.va_openai_model || "gpt-4o-mini").trim() : AutonomousAgent.AUTONOMOUS_MODEL,
         plannerBackend: hasOpenAI ? "openai" : "ollama"
       });
+    });
+    return true;
+  }
+  else if (msg.type === "VA_SAVE_OPENAI_SETTINGS") {
+    var pasted = msg.apiKey != null ? String(msg.apiKey) : "";
+    var cleanedNew = normalizeStoredOpenAIKey(pasted);
+    var modelIn = msg.model != null ? String(msg.model).trim() : "";
+    var model = modelIn || "gpt-4o-mini";
+    chrome.storage.local.get(["va_openai_api_key"], function(prev) {
+      var existing = normalizeStoredOpenAIKey(prev.va_openai_api_key);
+      var keyToStore = cleanedNew.length ? cleanedNew : existing;
+      if (!keyToStore.length) {
+        sendResponse({ ok: false, error: "Paste your API key in the field, then click Save." });
+        return;
+      }
+      chrome.storage.local.set({ va_openai_api_key: keyToStore, va_openai_model: model }, function() {
+        if (chrome.runtime.lastError) {
+          sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        sendResponse({ ok: true, plannerBackend: "openai", model: model });
+      });
+    });
+    return true;
+  }
+  else if (msg.type === "VA_CLEAR_OPENAI_KEY") {
+    chrome.storage.local.remove(["va_openai_api_key"], function() {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      sendResponse({ ok: true });
     });
     return true;
   }

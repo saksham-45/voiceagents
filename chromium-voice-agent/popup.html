@@ -43,7 +43,7 @@
 
     <details class="api-settings" id="api-settings">
       <summary class="api-settings-summary">OpenAI API (autonomous planner)</summary>
-      <p class="agent-beta-hint">Optional: create a secret key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">platform.openai.com/api-keys</a>. It is stored only in this profile via <code>chrome.storage.local</code> (not synced). Leave empty and save model only if you already saved a key; use <strong>Clear key</strong> to use local Ollama again.</p>
+      <p class="agent-beta-hint">Optional: create a secret key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">platform.openai.com/api-keys</a>. Paste it, then click <strong>Save</strong> — the status bar under “Autonomous agent” must show <strong>OpenAI</strong>. Stored only in this browser profile (<code>chrome.storage.local</code>). Leave key empty and Save to keep the previous key but change the model. <strong>Clear key</strong> switches the planner back to Ollama.</p>
       <input id="openai-api-key" class="api-key-input" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" title="OpenAI API key">
       <label class="api-model-label">Model <input type="text" id="openai-model" class="api-model-input" value="gpt-4o-mini" spellcheck="false" title="e.g. gpt-4o-mini, gpt-4o"></label>
       <div class="api-settings-actions">
