@@ -7,12 +7,14 @@ Local LMMS agent stack built around typed `AgentControl` tools, with a productio
 - Confirm-on-risk for destructive/ambiguous actions.
 - Context-aware command chaining (`open slicer and import sample.wav and split into 16`).
 - Structured stage traces for debugging and latency tuning.
+- Persistent daemon mode (`lmms-agentd`) for runtime split and retries.
 
 ## Structure
 
 - `integrations/lmms/AgentControl/`: integration contract and schema.
 - `plugins/AgentControl/`: typed LMMS tool server implementation.
 - `shared/`: deterministic discovery, planner, orchestrator, and project memory.
+- `lmms-agentd/`: persistent daemon API (`run_goal`, `health`, `warmup`) with idempotency and timeout classes.
 - `lmms-text-agent/`: text frontend over shared planner/orchestrator.
 - `lmms-voice-agent/`: voice frontend using `whisper.cpp` transcript + same planner/orchestrator.
 - `scripts/`: build/install/run helpers.
@@ -46,6 +48,8 @@ All tool responses follow:
 ## Run Text Agent
 
 ```bash
+./lmmsagent/scripts/run_agentd.sh
+# then in another shell:
 ./lmmsagent/scripts/run_text_agent.sh --interactive
 # or single command
 ./lmmsagent/scripts/run_text_agent.sh "set tempo to 124"
@@ -59,10 +63,22 @@ All tool responses follow:
 ## Run Voice Agent
 
 ```bash
+./lmmsagent/scripts/run_agentd.sh
+# then in another shell:
 ./lmmsagent/scripts/run_voice_agent.sh --audio /path/to/input.wav --whisper-model /path/to/ggml-model.bin
 # or bypass ASR
 ./lmmsagent/scripts/run_voice_agent.sh --transcript "load instrument triple oscillator"
 ```
+
+Use `--direct` on text/voice commands to bypass daemon and call the orchestrator in-process.
+
+## Phase 0 Baseline Benchmark
+
+```bash
+python3 ./lmmsagent/scripts/benchmark_phase01.py --repeat 2
+```
+
+The script writes a report JSON under `lmmsagent/evals/reports/` with success/clarification rates and p50/p95 latencies.
 
 ## Voice Runtime Configuration
 

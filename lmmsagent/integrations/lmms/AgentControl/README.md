@@ -12,6 +12,12 @@ Transport:
 - TCP localhost `127.0.0.1:7777`
 - newline-delimited JSON request/response
 
+Phase 1 runtime split:
+
+- external daemon `lmmsagent/lmms-agentd/main.py` on `127.0.0.1:7781`
+- daemon request envelope fields: `op`, `request_id`, `idempotency_key`, `timeout_class`, `retries`
+- daemon forwards typed actions to this AgentControl transport
+
 Request:
 
 ```json
@@ -78,3 +84,9 @@ Core environment knobs:
 - `LMMS_VOICE_SILENCE_ABS_THRESHOLD` (default `120`)
 - `LMMS_VOICE_TRACE` (`1` enables JSON stage traces)
 - `LMMS_CAP_*` per-intent capability flags (for phased rollout).
+
+Daemon controls:
+
+- `--host` (default `127.0.0.1`)
+- `--port` (default `7781`)
+- `--cache-ttl-s` idempotency cache TTL

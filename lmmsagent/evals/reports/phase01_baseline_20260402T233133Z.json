@@ -1,0 +1,886 @@
+{
+  "started_at": "2026-04-02T23:31:33.152277+00:00",
+  "finished_at": "2026-04-02T23:31:33.594018+00:00",
+  "suite_path": "/Users/saksham/grp/docs/lmmsagent/lmms/lmmsagent/evals/task_suite.json",
+  "buckets": [
+    "atomic",
+    "compositional"
+  ],
+  "repeat": 1,
+  "total_commands": 8,
+  "success_count": 8,
+  "failure_count": 0,
+  "clarification_count": 0,
+  "success_rate": 1.0,
+  "clarification_rate": 0.0,
+  "latency_ms": {
+    "wall_p50": 53,
+    "wall_p95": 65,
+    "wall_max": 65
+  },
+  "stage_latency_ms": {
+    "discovery_refresh": {
+      "p50": 48,
+      "p95": 55,
+      "max": 55
+    },
+    "final_state_read": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "initial_state_read": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "journal_write": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "planning": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "post_step_state_reads": {
+      "p50": 2,
+      "p95": 5,
+      "max": 5
+    },
+    "preferences_load": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "preferences_update": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "snapshot_calls": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "step_execution": {
+      "p50": 0,
+      "p95": 4,
+      "max": 4
+    }
+  },
+  "rows": [
+    {
+      "command": "set tempo to 120",
+      "ok": true,
+      "mode": "plan",
+      "status": "success",
+      "needs_clarification": false,
+      "wall_time_ms": 53,
+      "telemetry": {
+        "request_id": "req_fe4dfcdf8cbd",
+        "total_runtime_ms": 53,
+        "stage_timings_ms": {
+          "discovery_refresh": 52,
+          "initial_state_read": 0,
+          "preferences_load": 0,
+          "planning": 0,
+          "step_execution": 0,
+          "post_step_state_reads": 0,
+          "final_state_read": 0,
+          "journal_write": 0
+        },
+        "step_count": 1,
+        "trace_events": [
+          {
+            "ts_ms": 1775172693152,
+            "stage": "orchestrator",
+            "event": "start",
+            "data": {
+              "goal": "set tempo to 120"
+            }
+          },
+          {
+            "ts_ms": 1775172693205,
+            "stage": "planner",
+            "event": "result",
+            "data": {
+              "mode": "plan",
+              "subgoals": 1
+            }
+          },
+          {
+            "ts_ms": 1775172693205,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg1",
+              "action": "set_tempo"
+            }
+          },
+          {
+            "ts_ms": 1775172693205,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg1",
+              "action": "set_tempo",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693206,
+            "stage": "orchestrator",
+            "event": "finish",
+            "data": {
+              "outcome": "success",
+              "steps": 1
+            }
+          }
+        ]
+      }
+    },
+    {
+      "command": "show mixer",
+      "ok": true,
+      "mode": "plan",
+      "status": "success",
+      "needs_clarification": false,
+      "wall_time_ms": 52,
+      "telemetry": {
+        "request_id": "req_08db54883fc7",
+        "total_runtime_ms": 52,
+        "stage_timings_ms": {
+          "discovery_refresh": 50,
+          "initial_state_read": 0,
+          "preferences_load": 0,
+          "planning": 0,
+          "step_execution": 0,
+          "post_step_state_reads": 0,
+          "final_state_read": 0,
+          "journal_write": 0
+        },
+        "step_count": 1,
+        "trace_events": [
+          {
+            "ts_ms": 1775172693206,
+            "stage": "orchestrator",
+            "event": "start",
+            "data": {
+              "goal": "show mixer"
+            }
+          },
+          {
+            "ts_ms": 1775172693257,
+            "stage": "planner",
+            "event": "result",
+            "data": {
+              "mode": "plan",
+              "subgoals": 1
+            }
+          },
+          {
+            "ts_ms": 1775172693257,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg1",
+              "action": "open_tool"
+            }
+          },
+          {
+            "ts_ms": 1775172693258,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg1",
+              "action": "open_tool",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693259,
+            "stage": "orchestrator",
+            "event": "finish",
+            "data": {
+              "outcome": "success",
+              "steps": 1
+            }
+          }
+        ]
+      }
+    },
+    {
+      "command": "add effect reverb",
+      "ok": true,
+      "mode": "plan",
+      "status": "success",
+      "needs_clarification": false,
+      "wall_time_ms": 53,
+      "telemetry": {
+        "request_id": "req_2e1a304a329a",
+        "total_runtime_ms": 53,
+        "stage_timings_ms": {
+          "discovery_refresh": 47,
+          "initial_state_read": 0,
+          "preferences_load": 0,
+          "planning": 0,
+          "snapshot_calls": 0,
+          "step_execution": 0,
+          "post_step_state_reads": 3,
+          "final_state_read": 0,
+          "journal_write": 0
+        },
+        "step_count": 1,
+        "trace_events": [
+          {
+            "ts_ms": 1775172693259,
+            "stage": "orchestrator",
+            "event": "start",
+            "data": {
+              "goal": "add effect reverb"
+            }
+          },
+          {
+            "ts_ms": 1775172693307,
+            "stage": "planner",
+            "event": "result",
+            "data": {
+              "mode": "plan",
+              "subgoals": 1
+            }
+          },
+          {
+            "ts_ms": 1775172693308,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg1",
+              "action": "add_effect"
+            }
+          },
+          {
+            "ts_ms": 1775172693312,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg1",
+              "action": "add_effect",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693312,
+            "stage": "orchestrator",
+            "event": "finish",
+            "data": {
+              "outcome": "success",
+              "steps": 1
+            }
+          }
+        ]
+      }
+    },
+    {
+      "command": "import /tmp/loop.wav",
+      "ok": true,
+      "mode": "plan",
+      "status": "success",
+      "needs_clarification": false,
+      "wall_time_ms": 49,
+      "telemetry": {
+        "request_id": "req_a20910043a8b",
+        "total_runtime_ms": 49,
+        "stage_timings_ms": {
+          "discovery_refresh": 47,
+          "initial_state_read": 0,
+          "preferences_load": 0,
+          "planning": 0,
+          "step_execution": 0,
+          "post_step_state_reads": 0,
+          "final_state_read": 0,
+          "journal_write": 0
+        },
+        "step_count": 4,
+        "trace_events": [
+          {
+            "ts_ms": 1775172693312,
+            "stage": "orchestrator",
+            "event": "start",
+            "data": {
+              "goal": "import /tmp/loop.wav"
+            }
+          },
+          {
+            "ts_ms": 1775172693361,
+            "stage": "planner",
+            "event": "result",
+            "data": {
+              "mode": "plan",
+              "subgoals": 4
+            }
+          },
+          {
+            "ts_ms": 1775172693361,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg0",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693361,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg0",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693361,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg1",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693361,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg1",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693361,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg2",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693362,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg2",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693362,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg3",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693362,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg3",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693362,
+            "stage": "orchestrator",
+            "event": "finish",
+            "data": {
+              "outcome": "success",
+              "steps": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "command": "create sample track and load sample /tmp/kick.wav",
+      "ok": true,
+      "mode": "plan",
+      "status": "success",
+      "needs_clarification": false,
+      "wall_time_ms": 57,
+      "telemetry": {
+        "request_id": "req_c71b20288b74",
+        "total_runtime_ms": 57,
+        "stage_timings_ms": {
+          "discovery_refresh": 47,
+          "initial_state_read": 0,
+          "preferences_load": 0,
+          "planning": 0,
+          "step_execution": 1,
+          "post_step_state_reads": 5,
+          "final_state_read": 0,
+          "journal_write": 0
+        },
+        "step_count": 4,
+        "trace_events": [
+          {
+            "ts_ms": 1775172693362,
+            "stage": "orchestrator",
+            "event": "start",
+            "data": {
+              "goal": "create sample track and load sample /tmp/kick.wav"
+            }
+          },
+          {
+            "ts_ms": 1775172693411,
+            "stage": "planner",
+            "event": "result",
+            "data": {
+              "mode": "plan",
+              "subgoals": 4
+            }
+          },
+          {
+            "ts_ms": 1775172693411,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg0",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693411,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg0",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693411,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg1",
+              "action": "create_track"
+            }
+          },
+          {
+            "ts_ms": 1775172693418,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg1",
+              "action": "create_track",
+              "latency_ms": 1
+            }
+          },
+          {
+            "ts_ms": 1775172693418,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg2",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693419,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg2",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693419,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg3",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693419,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg3",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693420,
+            "stage": "orchestrator",
+            "event": "finish",
+            "data": {
+              "outcome": "success",
+              "steps": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "command": "load instrument triple oscillator and add effect compressor",
+      "ok": true,
+      "mode": "plan",
+      "status": "success",
+      "needs_clarification": false,
+      "wall_time_ms": 65,
+      "telemetry": {
+        "request_id": "req_8c3384d494d2",
+        "total_runtime_ms": 65,
+        "stage_timings_ms": {
+          "discovery_refresh": 55,
+          "initial_state_read": 0,
+          "preferences_load": 0,
+          "planning": 0,
+          "step_execution": 4,
+          "post_step_state_reads": 2,
+          "snapshot_calls": 0,
+          "final_state_read": 0,
+          "preferences_update": 0,
+          "journal_write": 0
+        },
+        "step_count": 2,
+        "trace_events": [
+          {
+            "ts_ms": 1775172693420,
+            "stage": "orchestrator",
+            "event": "start",
+            "data": {
+              "goal": "load instrument triple oscillator and add effect compressor"
+            }
+          },
+          {
+            "ts_ms": 1775172693477,
+            "stage": "planner",
+            "event": "result",
+            "data": {
+              "mode": "plan",
+              "subgoals": 2
+            }
+          },
+          {
+            "ts_ms": 1775172693477,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg1",
+              "action": "resolve_plugin"
+            }
+          },
+          {
+            "ts_ms": 1775172693478,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg1",
+              "action": "resolve_plugin",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693478,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg2",
+              "action": "load_instrument"
+            }
+          },
+          {
+            "ts_ms": 1775172693484,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg2",
+              "action": "load_instrument",
+              "latency_ms": 4
+            }
+          },
+          {
+            "ts_ms": 1775172693485,
+            "stage": "orchestrator",
+            "event": "finish",
+            "data": {
+              "outcome": "success",
+              "steps": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "command": "import audio /tmp/vocal.wav and open slicer",
+      "ok": true,
+      "mode": "plan",
+      "status": "success",
+      "needs_clarification": false,
+      "wall_time_ms": 51,
+      "telemetry": {
+        "request_id": "req_969a602086e5",
+        "total_runtime_ms": 51,
+        "stage_timings_ms": {
+          "discovery_refresh": 48,
+          "initial_state_read": 0,
+          "preferences_load": 0,
+          "planning": 0,
+          "step_execution": 0,
+          "post_step_state_reads": 0,
+          "final_state_read": 0,
+          "journal_write": 0
+        },
+        "step_count": 4,
+        "trace_events": [
+          {
+            "ts_ms": 1775172693485,
+            "stage": "orchestrator",
+            "event": "start",
+            "data": {
+              "goal": "import audio /tmp/vocal.wav and open slicer"
+            }
+          },
+          {
+            "ts_ms": 1775172693535,
+            "stage": "planner",
+            "event": "result",
+            "data": {
+              "mode": "plan",
+              "subgoals": 4
+            }
+          },
+          {
+            "ts_ms": 1775172693535,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg0",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693535,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg0",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693535,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg1",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693536,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg1",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693536,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg2",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693536,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg2",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693536,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg3",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693536,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg3",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693537,
+            "stage": "orchestrator",
+            "event": "finish",
+            "data": {
+              "outcome": "success",
+              "steps": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "command": "create instrument track and rename track to Bass Layer",
+      "ok": true,
+      "mode": "plan",
+      "status": "success",
+      "needs_clarification": false,
+      "wall_time_ms": 56,
+      "telemetry": {
+        "request_id": "req_e3119d41f2b4",
+        "total_runtime_ms": 56,
+        "stage_timings_ms": {
+          "discovery_refresh": 48,
+          "initial_state_read": 0,
+          "preferences_load": 0,
+          "planning": 0,
+          "step_execution": 2,
+          "post_step_state_reads": 2,
+          "snapshot_calls": 0,
+          "final_state_read": 0,
+          "journal_write": 0
+        },
+        "step_count": 4,
+        "trace_events": [
+          {
+            "ts_ms": 1775172693537,
+            "stage": "orchestrator",
+            "event": "start",
+            "data": {
+              "goal": "create instrument track and rename track to Bass Layer"
+            }
+          },
+          {
+            "ts_ms": 1775172693586,
+            "stage": "planner",
+            "event": "result",
+            "data": {
+              "mode": "plan",
+              "subgoals": 4
+            }
+          },
+          {
+            "ts_ms": 1775172693586,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg0",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693586,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg0",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693586,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg1",
+              "action": "create_track"
+            }
+          },
+          {
+            "ts_ms": 1775172693590,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg1",
+              "action": "create_track",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693590,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg2",
+              "action": "load_instrument"
+            }
+          },
+          {
+            "ts_ms": 1775172693593,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg2",
+              "action": "load_instrument",
+              "latency_ms": 2
+            }
+          },
+          {
+            "ts_ms": 1775172693593,
+            "stage": "step",
+            "event": "start",
+            "data": {
+              "subgoal": "sg3",
+              "action": "guide_note"
+            }
+          },
+          {
+            "ts_ms": 1775172693593,
+            "stage": "step",
+            "event": "end",
+            "data": {
+              "subgoal": "sg3",
+              "action": "guide_note",
+              "latency_ms": 0
+            }
+          },
+          {
+            "ts_ms": 1775172693593,
+            "stage": "orchestrator",
+            "event": "finish",
+            "data": {
+              "outcome": "success",
+              "steps": 4
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
