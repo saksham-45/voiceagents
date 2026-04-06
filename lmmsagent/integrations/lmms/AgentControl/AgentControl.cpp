@@ -687,7 +687,9 @@ bool AgentControlService::isFamiliarIntentText( const QString& rawText ) const
 	{
 		"project", "track", "instrument", "sample", "automation", "pattern", "mixer",
 		"piano", "roll", "editor", "song", "slicer", "splicer", "segment", "transient",
-		"slice", "effect", "plugin", "window", "tool", "file", "downloads"
+		"slice", "effect", "plugin", "window", "tool", "file", "downloads",
+		"hihat", "hat", "hats", "kick", "kik", "drum", "drums", "808",
+		"crash", "ride", "cymbal", "arpeggiator", "lane"
 	};
 
 	bool hasAction = false;
@@ -714,7 +716,9 @@ bool AgentControlService::isFamiliarIntentText( const QString& rawText ) const
 		"open", "show", "new", "create", "make", "import", "load", "set", "add", "remove",
 		"mute", "unmute", "solo", "unsolo", "undo", "tempo", "bpm", "divide",
 		"split", "slice", "openslicer", "showslicer", "manualmap", "beginnerhelp",
-		"play", "pause", "stop", "resume", "startplayback", "stopplayback"
+		"play", "pause", "stop", "resume", "startplayback", "stopplayback",
+		"hihat", "kick", "kik", "drum", "drums", "crash", "ride",
+		"cymbal", "arpeggiator", "lane"
 	};
 
 	for( const QString& keyword : keywords )
@@ -795,7 +799,8 @@ bool AgentControlService::applyHeuristicMappings(
 		{ R"(\binsrument\b)", "instrument", "corrected common typo" },
 		{ R"(\btrakc\b)", "track", "corrected common typo" },
 		{ R"(\bpattarn\b)", "pattern", "corrected common typo" },
-		{ R"(\beditr\b)", "editor", "corrected common typo" }
+		{ R"(\beditr\b)", "editor", "corrected common typo" },
+		{ R"(\bkik\b)", "kick", "corrected drum token typo" }
 	};
 	for( const auto& replacement : regexReplacements )
 	{
@@ -939,6 +944,8 @@ bool AgentControlService::applyHeuristicMappings(
 		"mute", "unmute", "solo", "unsolo", "undo", "tempo", "bpm", "divide", "split",
 		"slice", "slicer", "track", "instrument", "sample", "automation", "pattern",
 		"mixer", "project", "downloads", "equal", "segments", "transient",
+		"hihat", "hat", "hats", "kick", "drum", "drums", "808", "crash", "ride",
+		"cymbal", "arpeggiator", "lane",
 		"song", "editor", "piano", "roll", "window", "play", "pause", "stop",
 		"start", "resume", "playback"
 	};
@@ -2077,6 +2084,10 @@ QString AgentControlService::dispatchTokens( const QStringList& tokens, const QS
 		{
 			return addKickPattern( error ) ? tr( "Added kick pattern" ) : error;
 		}
+		if( rawText.contains( "kik", Qt::CaseInsensitive ) )
+		{
+			return addKickPattern( error ) ? tr( "Added kick pattern" ) : error;
+		}
 		if( rawText.contains( "snare", Qt::CaseInsensitive ) )
 		{
 			return addSnarePattern( error ) ? tr( "Added snare pattern" ) : error;
@@ -2169,7 +2180,7 @@ QString AgentControlService::dispatchTokens( const QStringList& tokens, const QS
 		return error;
 	}
 
-	return tr( "Unknown command: %1. For natural-language tasks use lmmsagent/scripts/run_text_agent.sh" ).arg( rawText );
+	return tr( "Unknown command: %1. Say 'help' to list supported commands." ).arg( rawText );
 }
 
 bool AgentControlService::handleSlicerWorkflow(

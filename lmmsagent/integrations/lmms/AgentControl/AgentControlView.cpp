@@ -540,6 +540,7 @@ QString AgentControlView::normalizeTranscriptForCommand( const QString& transcri
 	QString normalized = transcript.trimmed().toLower();
 	normalized.replace( QRegularExpression( R"([\u2018\u2019])" ), QStringLiteral( "'" ) );
 	normalized.replace( QRegularExpression( R"([\u201c\u201d])" ), QStringLiteral( "\"" ) );
+	normalized.replace( QRegularExpression( R"(\bkik\b)" ), QStringLiteral( "kick" ) );
 	normalized.replace( QRegularExpression( R"(\s+)" ), QStringLiteral( " " ) );
 	return normalized.simplified();
 }
@@ -1528,13 +1529,16 @@ bool AgentControlView::canonicalizeFastCommand( const QString& transcript, QStri
 	}
 
 	if( normalized.contains( QStringLiteral( "add" ) ) &&
-		( normalized.contains( QStringLiteral( "kick" ) ) || normalized.contains( QStringLiteral( "808" ) ) ||
+		( normalized.contains( QStringLiteral( "kick" ) ) || normalized.contains( QStringLiteral( "kik" ) ) ||
+		  normalized.contains( QStringLiteral( "808" ) ) ||
 		  normalized.contains( QStringLiteral( "drum" ) ) ) )
 	{
 		command = QStringLiteral( "add kick drums" );
 		return true;
 	}
-	if( normalized.contains( QStringLiteral( "kick" ) ) || normalized.contains( QStringLiteral( "808" ) ) )
+	if( normalized.contains( QStringLiteral( "kick" ) ) ||
+		normalized.contains( QStringLiteral( "kik" ) ) ||
+		normalized.contains( QStringLiteral( "808" ) ) )
 	{
 		command = QStringLiteral( "add kick drums" );
 		return true;
